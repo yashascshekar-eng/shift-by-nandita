@@ -25,7 +25,7 @@ export function verifySignature(rawBody: string, header: string | null, appSecre
   if (!header || !header.startsWith('sha256=') || !appSecret) return false;
   const expected = crypto.createHmac('sha256', appSecret).update(rawBody, 'utf8').digest('hex');
   const got = header.slice(7);
-  if (got.length !== expected.length) return false;
+  if (!/^[0-9a-f]{64}$/i.test(got)) return false;
   return crypto.timingSafeEqual(Buffer.from(got, 'hex'), Buffer.from(expected, 'hex'));
 }
 

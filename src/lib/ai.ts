@@ -31,7 +31,7 @@ async function callClaude(content: unknown[], system: string, maxTokens = 800): 
         system,
         messages: [{ role: 'user', content }],
       }),
-      signal: AbortSignal.timeout(25000),
+      signal: AbortSignal.timeout(20000),
     });
     if (!res.ok) {
       console.error('Claude error', res.status, await res.text().catch(() => ''));

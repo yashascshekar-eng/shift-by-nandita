@@ -147,6 +147,20 @@ describe('global buttons', () => {
   });
 });
 
+describe('noise and commands', () => {
+  it('ignores reactions and runs commands typed while a meal waits', async () => {
+    const { store, wa, bot } = setup();
+    await onboard(bot);
+    const before = wa.sent.length;
+    await bot.handle({ id: 'r1', from: PHONE, type: 'other' });
+    expect(wa.sent.length).toBe(before);
+    await bot.handle(text('2 chapati'));
+    await bot.handle(text('today'));
+    expect(store.meals).toHaveLength(0);
+    expect(wa.last.body).toContain('Today:');
+  });
+});
+
 describe('coach messages', () => {
   it('uses a normal message inside 24 hours and a template outside', async () => {
     const wa = new FakeWA();
@@ -185,6 +199,8 @@ describe('parsers and maths', () => {
     expect(parseHeightCm("5'4")).toBe(163);
     expect(parseCheckinNumbers('68.2, -, 9000')).toEqual({ weight: 68.2, water: null, steps: 9000 });
     expect(parseCheckinNumbers('5000')).toBeNull();
+    expect(parseCheckinNumbers('68.2, 7, 8,200')).toEqual({ weight: 68.2, water: 7, steps: 8200 });
+    expect(parseCheckinNumbers('68,2 7 9000')).toEqual({ weight: 68.2, water: 7, steps: 9000 });
   });
   it('computes BMR, macros and body fat', () => {
     expect(Math.round(bmr({ sex: 'f', weightKg: 62, heightCm: 162, age: 30 }))).toBe(1322);
@@ -204,6 +220,7 @@ describe('security', () => {
     expect(verifySignature(body, sig, 'secret')).toBe(true);
     expect(verifySignature(body + ' ', sig, 'secret')).toBe(false);
     expect(verifySignature(body, null, 'secret')).toBe(false);
+    expect(verifySignature(body, 'sha256=' + 'z'.repeat(64), 'secret')).toBe(false);
   });
   it('verifies Supabase hook signatures', () => {
     const key = crypto.randomBytes(24);

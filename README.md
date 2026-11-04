@@ -9,7 +9,7 @@ Coaching platform for Nandita Rao. Clients log on **WhatsApp** (meal photos, eve
 | Coach dashboard: clients, check-ins, targets, plans, WhatsApp, payment status | `/coach` |
 | WhatsApp bot (Meta Cloud API webhook) | `/api/whatsapp` |
 | Login codes sent on WhatsApp (Supabase auth hook) | `/api/auth/send-sms` |
-| Scheduled messages (7 am plan, 8:30 pm check-in, Sunday summary, quiet nudge) | `/api/cron/*` via `vercel.json` |
+| Scheduled messages (morning plan, evening check-in, Sunday summary, quiet nudge) | `/api/cron/*` via `vercel.json` |
 
 Stack: Next.js 14 · Supabase (Postgres, phone login, storage) · Vercel · WhatsApp Cloud API · Claude (optional, for meal-photo estimates and plan drafts).
 
@@ -83,6 +83,8 @@ Meta can reclassify a utility template as marketing (about 7× the price) if it 
 - Meta's duplicate webhook deliveries are ignored (deduped by message id), and abandoned conversations reset after 6 hours.
 
 Scheduled messages go only to clients with status **Active**. Times (IST): 7:00 plan, 19:00 quiet check (third quiet day only), 20:30 check-in (skipped if already done), Sunday 10:00 weekly summary.
+
+**On Vercel Hobby, each job fires at some point within its scheduled hour** (so the 7:00 plan arrives between 7:00 and 7:59). Vercel Pro ($20/month) runs them on the minute.
 
 ## Privacy and security
 

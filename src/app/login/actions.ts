@@ -28,7 +28,8 @@ export async function verifyCode(prev: LoginState, form: FormData): Promise<Logi
   const { data, error } = await sb.auth.verifyOtp({ phone: prev.phone, token, type: 'sms' });
   if (error || !data.user) return { ...prev, error: 'That code didn’t work. Check it or send a new one.' };
   const { data: profile } = await supabaseAdmin().from('profiles').select('role').eq('id', data.user.id).maybeSingle();
-  const dest = prev.next && prev.next.startsWith('/') ? prev.next : profile?.role === 'coach' ? '/coach' : '/me';
+  const safeNext = prev.next && /^\/(me|coach)(\/[\w-]*)?(\?[\w=&-]*)?$/.test(prev.next) ? prev.next : null;
+  const dest = safeNext ?? (profile?.role === 'coach' ? '/coach' : '/me');
   redirect(dest);
 }
 

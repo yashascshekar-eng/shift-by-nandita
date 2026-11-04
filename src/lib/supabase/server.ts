@@ -31,7 +31,9 @@ export async function currentRole(): Promise<{ userId: string; phone: string; ro
   const user = await currentUser();
   if (!user) return null;
   const { data } = await supabaseAdmin().from('profiles').select('role, phone').eq('id', user.id).maybeSingle();
-  return { userId: user.id, phone: data?.phone ?? user.phone ?? '', role: (data?.role as 'client' | 'coach') ?? 'client' };
+  // Only a confirmed phone may be used to find or link a client record.
+  const phone = user.phone_confirmed_at ? (data?.phone ?? user.phone ?? '') : '';
+  return { userId: user.id, phone, role: (data?.role as 'client' | 'coach') ?? 'client' };
 }
 
 export async function requireCoach() {

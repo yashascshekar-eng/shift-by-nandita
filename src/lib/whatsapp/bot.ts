@@ -68,7 +68,9 @@ export function parseHeightCm(s: string): number | null {
 
 /** "68.2, 7, 8200" → weight, water, steps. "-" skips a value. */
 export function parseCheckinNumbers(s: string): { weight: number | null; water: number | null; steps: number | null } | null {
-  const parts = s.split(/[,\s/]+/).filter(Boolean).slice(0, 3);
+  // "8,200" → 8200 and "68,2" → 68.2 before splitting on commas.
+  const norm = s.replace(/(\d),(\d{3})\b/g, '$1$2').replace(/\b(\d{2,3}),(\d)\b(?!\d)/, '$1.$2');
+  const parts = norm.split(/[,\s/;]+/).filter(Boolean).slice(0, 3);
   if (!parts.length) return null;
   const val = (p?: string) => (p === undefined || p === '-' ? null : Number(p.replace(/[^\d.]/g, '')));
   const [w, wa, st] = [val(parts[0]), val(parts[1]), val(parts[2])];
@@ -97,6 +99,7 @@ export class ShiftBot {
     const client = await this.store.getClientByPhone(msg.from);
     const fresh = await this.store.recordInbound(msg.id, msg.from, client?.id ?? null, msg.type, msg);
     if (!fresh) return;
+    if (msg.type === 'other') return; // reactions, stickers, locations, etc.
     const session = await this.store.getSession(msg.from);
     const text = (msg.text ?? '').trim();
 
@@ -277,6 +280,10 @@ export class ShiftBot {
     if (id === 'meal_edit') {
       await this.store.setSession(msg.from, 'meal:edit', d);
       return this.wa.text(msg.from, 'What’s different? e.g. "3 chapati, not 2" or "no rice, add curd"');
+    }
+    if (/^(today|summary|status|plan|meals|my plan|workout|check ?-?in)$/i.test(t)) {
+      await this.store.setSession(msg.from, 'idle'); // a command, not a correction
+      return this.idle(msg, client);
     }
     if (t) return this.mealEdit(msg, { state: 'meal:edit', data: d }, client); // typed a correction directly
     return this.proposeMeal(msg.from, client, d.items, d.photo_path, d.slot);

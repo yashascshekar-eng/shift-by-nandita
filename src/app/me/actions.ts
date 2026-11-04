@@ -13,6 +13,7 @@ const dateOk = (d: string) => d <= istDate() && d >= addDays(istDate(), -60);
 export async function saveIntake(form: FormData) {
   const { me, client } = await requireClient();
   if (client) redirect('/me');
+  if (!me.phone) redirect('/login?next=/me');
   const s = z.object({
     name: z.string().trim().min(2).max(40), sex: z.enum(['f', 'm']), age: z.coerce.number().int().min(14).max(90),
     height_cm: z.coerce.number().min(120).max(220), weight_kg: z.coerce.number().min(30).max(250),

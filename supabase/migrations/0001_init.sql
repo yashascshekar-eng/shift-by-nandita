@@ -107,21 +107,22 @@ language sql stable security definer set search_path = public as $$
   select id from public.clients where user_id = auth.uid();
 $$;
 
--- When someone signs in with their phone for the first time, create a profile and
--- link it to the client record the WhatsApp bot already made for that number.
-create or replace function public.handle_new_user() returns trigger
+-- Once someone has PROVED they own a phone (entered the WhatsApp code), create
+-- their profile and link it to the client record the bot made for that number.
+-- Unconfirmed sign-ups are ignored, so nobody can claim another person's number.
+create or replace function public.handle_user_phone() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
+  if new.phone is null or new.phone_confirmed_at is null then return new; end if;
   insert into public.profiles (id, phone) values (new.id, new.phone)
   on conflict (id) do update set phone = excluded.phone;
-  if new.phone is not null then
-    update public.clients set user_id = new.id where phone = new.phone and user_id is null;
-  end if;
+  update public.clients set user_id = new.id where phone = new.phone and user_id is null;
   return new;
 end $$;
 
-create trigger on_auth_user_created
-  after insert on auth.users for each row execute function public.handle_new_user();
+create trigger on_auth_user_phone_confirmed
+  after insert or update of phone_confirmed_at, phone on auth.users
+  for each row execute function public.handle_user_phone();
 
 -- ---------- row level security ----------
 alter table public.profiles   enable row level security;

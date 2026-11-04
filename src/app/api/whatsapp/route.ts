@@ -5,7 +5,7 @@ import { makeRuntime } from '@/lib/whatsapp/factory';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 /** Meta's one-time webhook verification. */
 export function GET(req: NextRequest) {
