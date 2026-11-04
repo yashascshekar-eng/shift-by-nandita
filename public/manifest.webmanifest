@@ -1,0 +1,9 @@
+{
+  "name": "SHIFT by Nandita",
+  "short_name": "SHIFT",
+  "start_url": "/me",
+  "display": "standalone",
+  "background_color": "#f3f6f2",
+  "theme_color": "#2c5a40",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
