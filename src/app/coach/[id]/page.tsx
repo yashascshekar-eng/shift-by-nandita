@@ -9,7 +9,7 @@ import { WeightChart } from '@/components/Charts';
 import { ActionForm, SubmitButton } from '@/components/ActionForm';
 import type { Client, Food, Log, Meal, Measurement } from '@/lib/types';
 import { METRICS, ProgressView, mergeRows, type MetricKey } from '@/components/Progress';
-import { messageClient, replyToLog, saveStatus, saveTargets, sendPaymentLink } from '../actions';
+import { linkLogin, messageClient, replyToLog, resetClientPassword, saveStatus, saveTargets, sendPaymentLink } from '../actions';
 import { PlanEditor } from '../PlanEditor';
 import { clientStatus } from '@/lib/status';
 
@@ -162,6 +162,14 @@ function Profile({ c }: { c: Client }) {
       <p className="small muted">Only active clients get the 7 am plan, evening check-in and weekly summary.</p>
       <SubmitButton>Save</SubmitButton>
     </ActionForm>
+    <div className="card">
+      <h3>Web login</h3>
+      <p className="small muted">{c.user_id ? `Connected to the login for +${c.phone}.` : `Not connected. If they created a login with +${c.phone}, connect it here.`}</p>
+      <div className="row">
+        {!c.user_id && <ActionForm action={linkLogin} className="row"><input type="hidden" name="client_id" value={c.id} /><SubmitButton className="btn sm">Connect login</SubmitButton></ActionForm>}
+        {c.user_id && <ActionForm action={resetClientPassword} className="stack"><input type="hidden" name="client_id" value={c.id} /><SubmitButton className="btn sm ghost">Reset password</SubmitButton></ActionForm>}
+      </div>
+    </div>
     {c.payment_link && (
       <ActionForm action={sendPaymentLink} className="row">
         <input type="hidden" name="client_id" value={c.id} />

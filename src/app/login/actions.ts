@@ -1,45 +1,63 @@
 'use server';
 import { redirect } from 'next/navigation';
 import { supabaseUser, supabaseAdmin } from '@/lib/supabase/server';
+import { phoneDigits, loginEmail } from '@/lib/phone';
 
-export type LoginState = { step: 'phone' | 'code'; phone?: string; error?: string; next?: string };
+export type LoginState = { mode: 'login' | 'signup' | 'code'; phone?: string; error?: string; next?: string };
 
-function toE164(input: string): string | null {
-  const d = input.replace(/\D/g, '');
-  if (d.length === 10) return '+91' + d;
-  if (d.length === 12 && d.startsWith('91')) return '+' + d;
-  if (d.length >= 11 && d.length <= 15) return '+' + d;
-  return null;
+const safeNext = (n?: string) => (n && /^\/(me|coach)(\/[\w-]*)?(\?[\w=&-]*)?$/.test(n) ? n : null);
+
+async function goHome(userId: string, next?: string): Promise<never> {
+  const { data: profile } = await supabaseAdmin().from('profiles').select('role').eq('id', userId).maybeSingle();
+  redirect(safeNext(next) ?? (profile?.role === 'coach' ? '/coach' : '/me'));
 }
 
-export async function sendCode(_prev: LoginState, form: FormData): Promise<LoginState> {
-  const next = String(form.get('next') || '');
-  const phone = toE164(String(form.get('phone') || ''));
-  if (!phone) return { step: 'phone', error: 'Enter your 10-digit mobile number.', next };
-  const { error } = await supabaseUser().auth.signInWithOtp({ phone });
-  if (error) return { step: 'phone', error: 'We couldn’t send the code. Check the number and try again in a minute.', next };
-  return { step: 'code', phone, next };
+/** WhatsApp number + password. Sign-up creates the account server-side, so no email or SMS is ever sent. */
+export async function passwordStep(prev: LoginState, form: FormData): Promise<LoginState> {
+  const mode = form.get('mode') === 'signup' ? 'signup' : 'login';
+  const next = String(form.get('next') || prev.next || '');
+  const digits = phoneDigits(String(form.get('phone') || ''));
+  const password = String(form.get('password') || '');
+  if (!digits) return { mode, next, error: 'Enter your 10-digit WhatsApp number.' };
+  if (password.length < 8) return { mode, next, phone: digits, error: 'The password needs at least 8 characters.' };
+  const email = loginEmail(digits);
+
+  if (mode === 'signup') {
+    if (password !== String(form.get('password2') || '')) return { mode, next, phone: digits, error: 'The two passwords don’t match.' };
+    const admin = supabaseAdmin();
+    const { data: taken } = await admin.from('profiles').select('id').eq('phone', digits).maybeSingle();
+    if (taken) return { mode: 'login', next, phone: digits, error: 'This number already has an account. Log in instead.' };
+    const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true, user_metadata: { phone: digits, login: 'password' } });
+    if (error || !data.user) {
+      const exists = /already|registered|exists/i.test(error?.message ?? '');
+      return { mode: exists ? 'login' : 'signup', next, phone: digits, error: exists ? 'This number already has an account. Log in instead.' : 'We couldn’t create the account. Try again in a minute.' };
+    }
+    await admin.from('profiles').insert({ id: data.user.id, phone: digits });
+  }
+
+  const { data, error } = await supabaseUser().auth.signInWithPassword({ email, password });
+  if (error || !data.user) return { mode: 'login', next, phone: digits, error: 'That number and password don’t match. Ask Nandita to reset your password if you’ve forgotten it.' };
+  return goHome(data.user.id, next);
 }
 
-export async function verifyCode(prev: LoginState, form: FormData): Promise<LoginState> {
+// ---------- WhatsApp code login (switched on with WHATSAPP_LOGIN=on once the shift_otp template is approved) ----------
+export async function codeStep(prev: LoginState, form: FormData): Promise<LoginState> {
+  const next = String(form.get('next') || prev.next || '');
+  if (!prev.phone || prev.mode !== 'code') {
+    const digits = phoneDigits(String(form.get('phone') || ''));
+    if (!digits) return { mode: 'code', next, error: 'Enter your 10-digit WhatsApp number.' };
+    const { error } = await supabaseUser().auth.signInWithOtp({ phone: '+' + digits });
+    if (error) return { mode: 'code', next, error: 'We couldn’t send the code. Try again in a minute.' };
+    return { mode: 'code', phone: digits, next };
+  }
   const token = String(form.get('code') || '').replace(/\D/g, '');
-  if (!prev.phone || token.length !== 6) return { ...prev, error: 'Enter the 6-digit code from WhatsApp.' };
-  const sb = supabaseUser();
-  const { data, error } = await sb.auth.verifyOtp({ phone: prev.phone, token, type: 'sms' });
+  if (token.length !== 6) return { ...prev, error: 'Enter the 6-digit code from WhatsApp.' };
+  const { data, error } = await supabaseUser().auth.verifyOtp({ phone: '+' + prev.phone, token, type: 'sms' });
   if (error || !data.user) return { ...prev, error: 'That code didn’t work. Check it or send a new one.' };
-  const { data: profile } = await supabaseAdmin().from('profiles').select('role').eq('id', data.user.id).maybeSingle();
-  const safeNext = prev.next && /^\/(me|coach)(\/[\w-]*)?(\?[\w=&-]*)?$/.test(prev.next) ? prev.next : null;
-  const dest = safeNext ?? (profile?.role === 'coach' ? '/coach' : '/me');
-  redirect(dest);
+  return goHome(data.user.id, next);
 }
 
 export async function signOut() {
   await supabaseUser().auth.signOut();
   redirect('/');
-}
-
-/** One action for both steps, so the form keeps its state between them. */
-export async function loginStep(prev: LoginState, form: FormData): Promise<LoginState> {
-  if (form.get('restart')) return { step: 'phone', next: prev.next };
-  return prev.step === 'phone' ? sendCode(prev, form) : verifyCode(prev, form);
 }

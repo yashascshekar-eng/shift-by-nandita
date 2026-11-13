@@ -27,13 +27,20 @@ export async function currentUser() {
   return data.user ?? null;
 }
 
-export async function currentRole(): Promise<{ userId: string; phone: string; role: 'client' | 'coach' } | null> {
+export type Me = { userId: string; phone: string; phoneVerified: boolean; role: 'client' | 'coach' };
+
+/**
+ * Who is signed in. `phone` comes from the profile, which is written only by our own
+ * server code (password sign-up) or by the database trigger after a WhatsApp code is
+ * confirmed. `phoneVerified` is true only for the WhatsApp-code route.
+ */
+export async function currentRole(): Promise<Me | null> {
   const user = await currentUser();
   if (!user) return null;
   const { data } = await supabaseAdmin().from('profiles').select('role, phone').eq('id', user.id).maybeSingle();
-  // Only a confirmed phone may be used to find or link a client record.
-  const phone = user.phone_confirmed_at ? (data?.phone ?? user.phone ?? '') : '';
-  return { userId: user.id, phone, role: (data?.role as 'client' | 'coach') ?? 'client' };
+  const phoneVerified = Boolean(user.phone_confirmed_at);
+  const phone = data?.phone ?? (phoneVerified ? user.phone ?? '' : '');
+  return { userId: user.id, phone, phoneVerified, role: (data?.role as 'client' | 'coach') ?? 'client' };
 }
 
 export async function requireCoach() {
@@ -43,13 +50,15 @@ export async function requireCoach() {
   return me;
 }
 
-/** The signed-in client's record, linking it by phone if the trigger hasn't. */
-export async function requireClient(): Promise<{ me: NonNullable<Awaited<ReturnType<typeof currentRole>>>; client: Client | null }> {
+/** The signed-in client's record. */
+export async function requireClient(): Promise<{ me: Me; client: Client | null }> {
   const me = await currentRole();
   if (!me) redirect('/login?next=/me');
   const admin = supabaseAdmin();
   let { data } = await admin.from('clients').select('*').eq('user_id', me.userId).maybeSingle();
-  if (!data && me.phone) {
+  // Auto-link to a WhatsApp-created record only when the number was proved with a code.
+  // Password sign-ups are linked by Nandita from her dashboard instead.
+  if (!data && me.phone && me.phoneVerified) {
     const linked = await admin.from('clients').update({ user_id: me.userId }).eq('phone', me.phone).is('user_id', null).select('*').maybeSingle();
     data = linked.data;
   }

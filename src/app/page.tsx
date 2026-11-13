@@ -10,7 +10,7 @@ const ACRO = [
 
 export default function Home() {
   const wa = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER;
-  const start = wa ? `https://wa.me/${wa}?text=${encodeURIComponent('Hi! I want to start coaching')}` : '/login';
+  const start = wa && process.env.WHATSAPP_LIVE === 'on' ? `https://wa.me/${wa}?text=${encodeURIComponent('Hi! I want to start coaching')}` : '/login?new=1';
   return (
     <main>
       <section className="hero">
@@ -20,7 +20,7 @@ export default function Home() {
           <h1>Shift your habits. Transform your life.</h1>
           <p className="lede">One-on-one coaching with Nandita Rao, run on WhatsApp. Send a photo of your plate and it&rsquo;s logged. Your plan is built around the food you already eat at home, and adjusted every week from what you log.</p>
           <div className="cta">
-            <a className="btn" href={start}>Start on WhatsApp</a>
+            <a className="btn" href={start}>{start.startsWith('/') ? 'Join SHIFT' : 'Start on WhatsApp'}</a>
             <Link className="btn ghost" href="/tools">Work out your calories</Link>
           </div>
         </div>

@@ -16,6 +16,10 @@ export const dynamic = 'force-dynamic';
 
 export default async function Me({ searchParams }: { searchParams: { date?: string; tab?: string; saved?: string; error?: string; metric?: string } }) {
   const { client } = await requireClient();
+  if (!client && searchParams.error === 'exists') return (
+    <main className="narrow stack"><h1 style={{ fontSize: 28 }}>Almost there</h1>
+      <p className="banner">Your number already has a SHIFT record from WhatsApp. Message Nandita and she&rsquo;ll connect it to this login in a minute.</p></main>
+  );
   if (!client) return <Intake error={searchParams.error === 'intake'} />;
 
   const today = istDate();

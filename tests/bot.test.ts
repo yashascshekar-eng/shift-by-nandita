@@ -272,3 +272,16 @@ describe('catalogue and diet chart', () => {
     expect(rows.map((r) => [r.date, r.weight, r.waist])).toEqual([['2026-11-08', 67.9, 84], ['2026-11-01', 68.4, null]]);
   });
 });
+
+import { phoneDigits, loginEmail, tempPassword } from '@/lib/phone';
+describe('phone login helpers', () => {
+  it('normalises Indian numbers to WhatsApp ids', () => {
+    expect(phoneDigits('98765 43210')).toBe('919876543210');
+    expect(phoneDigits('+91 98765-43210')).toBe('919876543210');
+    expect(phoneDigits('098765 43210')).toBe('919876543210');
+    expect(phoneDigits('12345')).toBeNull();
+    expect(phoneDigits('5876543210')).toBeNull();
+    expect(loginEmail('919876543210')).toBe('919876543210@login.shiftbynandita.com');
+    expect(tempPassword()).toMatch(/^[a-z]+-\d{4}-[a-z]+$/);
+  });
+});

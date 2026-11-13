@@ -25,6 +25,8 @@ export async function saveIntake(form: FormData) {
   }).safeParse(Object.fromEntries(form));
   if (!s.success) redirect('/me?error=intake');
   const admin = supabaseAdmin();
+  const { data: existing } = await admin.from('clients').select('id').eq('phone', me.phone).maybeSingle();
+  if (existing) redirect('/me?error=exists'); // started on WhatsApp first: Nandita links the two
   const { data: c } = await admin.from('clients').insert({ ...s.data, phone: me.phone, user_id: me.userId, targets: draftTargets(s.data) }).select('id').single();
   if (c) await admin.from('logs').upsert({ client_id: c.id, date: istDate(), weight: s.data.weight_kg }, { onConflict: 'client_id,date' });
   revalidatePath('/me');

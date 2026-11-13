@@ -7,6 +7,7 @@ import { sendCoachMessage } from '@/lib/whatsapp/bot';
 import { draftPlan, aiEnabled } from '@/lib/ai';
 import { targetsFor, WEEKDAYS, type SplitKey } from '@/lib/nutrition';
 import { chartItem, foodSchema } from '@/lib/catalogue';
+import { tempPassword } from '@/lib/phone';
 import type { ChartMeal, Client, Food } from '@/lib/types';
 
 const COACH = () => process.env.COACH_NAME || 'Nandita';
@@ -164,4 +165,30 @@ export async function sendPaymentLink(_p: ActionResult | null, form: FormData): 
   if (!c.payment_link) return { ok: false, message: 'Save a payment link first.' };
   const err = await notify(c, `To start your ${c.plan_name || 'SHIFT'} plan, pay here: ${c.payment_link}`);
   return { ok: !err, message: err ?? 'Payment link sent on WhatsApp.' };
+}
+
+// ---------- web logins ----------
+/** Connect a number + password login to this client's record (same WhatsApp number). */
+export async function linkLogin(_p: ActionResult | null, form: FormData): Promise<ActionResult> {
+  await requireCoach();
+  const c = await getClient(String(form.get('client_id')));
+  const admin = supabaseAdmin();
+  const { data: prof } = await admin.from('profiles').select('id').eq('phone', c.phone).maybeSingle();
+  if (!prof) return { ok: false, message: `No login found for +${c.phone}. Ask them to create one at shiftbynandita.com/login with this number.` };
+  const { data: other } = await admin.from('clients').select('id,name').eq('user_id', prof.id).maybeSingle();
+  if (other && other.id !== c.id) return { ok: false, message: `That login is already connected to ${other.name ?? 'another client'}.` };
+  await admin.from('clients').update({ user_id: prof.id }).eq('id', c.id);
+  revalidatePath(`/coach/${c.id}`);
+  return { ok: true, message: 'Login connected. They’ll see this plan when they log in.' };
+}
+
+/** Set a new temporary password for this client's login and show it to the coach. */
+export async function resetClientPassword(_p: ActionResult | null, form: FormData): Promise<ActionResult> {
+  await requireCoach();
+  const c = await getClient(String(form.get('client_id')));
+  if (!c.user_id) return { ok: false, message: 'This client has no web login connected yet.' };
+  const pw = tempPassword();
+  const { error } = await supabaseAdmin().auth.admin.updateUserById(c.user_id, { password: pw });
+  if (error) return { ok: false, message: 'Could not reset the password. Try again.' };
+  return { ok: true, message: `New password: ${pw}  Send it to them on WhatsApp; they can keep using it.` };
 }
