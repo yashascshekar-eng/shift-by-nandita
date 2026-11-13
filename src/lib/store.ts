@@ -112,7 +112,7 @@ export class MemoryStore implements Store {
   async createClient(c: Partial<Client> & { phone: string }) {
     const existing = await this.getClientByPhone(c.phone);
     if (existing) { Object.assign(existing, c); return existing; }
-    const row = { id: 'c' + (this.clients.length + 1), user_id: null, status: 'lead', meal_plan: [], workout_plan: {}, created_at: new Date().toISOString(), last_inbound_at: null, last_log_date: null, ...c } as Client;
+    const row = { id: 'c' + (this.clients.length + 1), user_id: null, status: 'lead', meal_plan: [], diet_chart: [], workout_plan: {}, created_at: new Date().toISOString(), last_inbound_at: null, last_log_date: null, ...c } as Client;
     this.clients.push(row);
     return row;
   }

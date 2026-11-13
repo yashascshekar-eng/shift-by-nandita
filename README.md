@@ -5,8 +5,9 @@ Coaching platform for Nandita Rao. Clients log on **WhatsApp** (meal photos, eve
 | Part | Where |
 | --- | --- |
 | Landing page, calculators | `/`, `/tools` |
-| Client app: today, meals, check-in, plan, progress | `/me` |
-| Coach dashboard: clients, check-ins, targets, plans, WhatsApp, payment status | `/coach` |
+| Client app: today (log from the food catalogue), diet chart, progress (measurements graph + table), calculators (BMR, TDEE, body fat, goal, macros) | `/me` |
+| Coach dashboard: clients, check-ins, progress, targets, diet chart builder, workouts, WhatsApp, payment status | `/coach` |
+| Food catalogue (add, edit, hide foods; promote clients' own foods) | `/coach/foods` |
 | WhatsApp bot (Meta Cloud API webhook) | `/api/whatsapp` |
 | Login codes sent on WhatsApp (Supabase auth hook) | `/api/auth/send-sms` |
 | Scheduled messages (morning plan, evening check-in, Sunday summary, quiet nudge) | `/api/cron/*` via `vercel.json` |
@@ -19,7 +20,7 @@ Stack: Next.js 14 · Supabase (Postgres, phone login, storage) · Vercel · What
 
 ### 1. Supabase
 1. Create a project at supabase.com (region: Mumbai).
-2. **SQL Editor** → paste and run `supabase/migrations/0001_init.sql`.
+2. **SQL Editor** → paste and run `supabase/migrations/0001_init.sql`, then `supabase/migrations/0002_catalogue_progress.sql` (food catalogue with Nandita's foods, diet charts, measurements).
 3. **Authentication → Providers → Phone**: turn on. You don't need an SMS provider.
 4. Copy **Project URL**, **anon key** and **service_role key** from Project Settings → API.
 

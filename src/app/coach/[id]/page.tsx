@@ -7,15 +7,16 @@ import { within24h } from '@/lib/dates';
 import { aiEnabled } from '@/lib/ai';
 import { WeightChart } from '@/components/Charts';
 import { ActionForm, SubmitButton } from '@/components/ActionForm';
-import type { Client, Log, Meal } from '@/lib/types';
+import type { Client, Food, Log, Meal, Measurement } from '@/lib/types';
+import { METRICS, ProgressView, mergeRows, type MetricKey } from '@/components/Progress';
 import { messageClient, replyToLog, saveStatus, saveTargets, sendPaymentLink } from '../actions';
 import { PlanEditor } from '../PlanEditor';
 import { clientStatus } from '@/lib/status';
 
 export const dynamic = 'force-dynamic';
-const TABS = [['checkins', 'Check-ins'], ['targets', 'Targets'], ['plan', 'Diet & workouts'], ['chat', 'WhatsApp'], ['profile', 'Profile & plan']] as const;
+const TABS = [['checkins', 'Check-ins'], ['progress', 'Progress'], ['targets', 'Targets'], ['plan', 'Diet chart & workouts'], ['chat', 'WhatsApp'], ['profile', 'Profile & plan']] as const;
 
-export default async function ClientPage({ params, searchParams }: { params: { id: string }; searchParams: { tab?: string } }) {
+export default async function ClientPage({ params, searchParams }: { params: { id: string }; searchParams: { tab?: string; metric?: string } }) {
   await requireCoach();
   const sb = supabaseUser();
   const { data } = await sb.from('clients').select('*').eq('id', params.id).maybeSingle();
@@ -36,7 +37,8 @@ export default async function ClientPage({ params, searchParams }: { params: { i
       <p className="small muted">{windowOpen ? 'Messaged in the last 24 hours: your messages go as normal WhatsApp replies.' : 'No message in the last 24 hours: your messages go as the coach template.'}</p>
       {tab === 'checkins' && <Checkins c={c} />}
       {tab === 'targets' && <Targets c={c} />}
-      {tab === 'plan' && <PlanEditor clientId={c.id} meals={c.meal_plan ?? []} workout={c.workout_plan ?? {}} diet={DIETS[c.diet ?? 'veg']} aiOn={aiEnabled()} />}
+      {tab === 'plan' && <Plan c={c} />}
+      {tab === 'progress' && <ClientProgress c={c} metric={(METRICS.some(([k]) => k === searchParams.metric) ? searchParams.metric : 'weight') as MetricKey} />}
       {tab === 'chat' && <Chat c={c} />}
       {tab === 'profile' && <Profile c={c} />}
     </main>
@@ -167,4 +169,18 @@ function Profile({ c }: { c: Client }) {
       </ActionForm>
     )}
   </>);
+}
+
+async function Plan({ c }: { c: Client }) {
+  const { data } = await supabaseUser().from('foods').select('*').eq('archived', false).or(`owner_client_id.is.null,owner_client_id.eq.${c.id}`).order('name');
+  return <PlanEditor clientId={c.id} chart={c.diet_chart ?? []} workout={c.workout_plan ?? {}} foods={(data ?? []) as Food[]} targets={c.targets ?? draftTargets(c)} diet={DIETS[c.diet ?? 'veg']} aiOn={aiEnabled()} />;
+}
+
+async function ClientProgress({ c, metric }: { c: Client; metric: MetricKey }) {
+  const sb = supabaseUser();
+  const [{ data: logs }, { data: ms }] = await Promise.all([
+    sb.from('logs').select('date,weight').eq('client_id', c.id).not('weight', 'is', null).order('date'),
+    sb.from('measurements').select('*').eq('client_id', c.id).order('date'),
+  ]);
+  return <ProgressView rows={mergeRows((logs ?? []) as { date: string; weight: number }[], (ms ?? []) as Measurement[])} metric={metric} hrefFor={(m) => `/coach/${c.id}?tab=progress&metric=${m}`} startWeight={Number(c.weight_kg)} targetWeight={c.target_weight} />;
 }

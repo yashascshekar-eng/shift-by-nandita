@@ -1,34 +1,44 @@
 import Link from 'next/link';
 import { requireClient, supabaseUser } from '@/lib/supabase/server';
 import { addDays, istDate, prettyDate, weekdayShort } from '@/lib/dates';
-import { ACTIVITY, DIETS, draftTargets, ENERGY, GOALS, MEAL_SLOTS, SLOT_LABEL, SPLITS, WEEKDAYS, totals } from '@/lib/nutrition';
-import { FOODS } from '@/lib/foods';
-import { Bar, Ring, WeightChart } from '@/components/Charts';
-import type { Log, Meal } from '@/lib/types';
-import { addMeal, deleteMeal, saveCheckin, saveIntake } from './actions';
+import { ACTIVITY, DIETS, draftTargets, ENERGY, GOALS, MEAL_SLOTS, SLOT_LABEL, SPLITS, WEEKDAYS, totals, type Targets } from '@/lib/nutrition';
+import { Bar, Ring } from '@/components/Charts';
+import { DietChartView } from '@/components/DietChart';
+import { METRICS, ProgressView, mergeRows, type MetricKey } from '@/components/Progress';
+import { Calculators } from '../tools/Calculators';
+import { MealLogger } from './MealLogger';
+import { istHourMinute, slotForTime } from '@/lib/dates';
+import type { Client, Food, Log, Meal, Measurement } from '@/lib/types';
+import { deleteMeal, deleteMeasurement, logChartMeal, saveBodyFat, saveCheckin, saveIntake, saveMeasurement } from './actions';
 
 export const metadata = { title: 'My plan' };
 export const dynamic = 'force-dynamic';
 
-export default async function Me({ searchParams }: { searchParams: { date?: string; tab?: string; saved?: string; error?: string } }) {
+export default async function Me({ searchParams }: { searchParams: { date?: string; tab?: string; saved?: string; error?: string; metric?: string } }) {
   const { client } = await requireClient();
   if (!client) return <Intake error={searchParams.error === 'intake'} />;
 
   const today = istDate();
   const date = searchParams.date && searchParams.date <= today && searchParams.date >= addDays(today, -60) ? searchParams.date : today;
-  const tab = ['today', 'plan', 'progress'].includes(searchParams.tab ?? '') ? searchParams.tab! : 'today';
+  const tab = ['today', 'plan', 'progress', 'tools'].includes(searchParams.tab ?? '') ? searchParams.tab! : 'today';
   const sb = supabaseUser(); // reads go through RLS as this client
   const week = [...Array(7)].map((_, i) => addDays(today, i - 6));
-  const [{ data: meals }, { data: logs }] = await Promise.all([
+  const [{ data: meals }, { data: logs }, { data: foods }, { data: favs }, { data: recentMeals }, { data: ms }] = await Promise.all([
     sb.from('meals').select('*').eq('client_id', client.id).eq('date', date).order('created_at'),
-    sb.from('logs').select('*').eq('client_id', client.id).gte('date', addDays(today, -60)).order('date'),
+    sb.from('logs').select('*').eq('client_id', client.id).gte('date', addDays(today, -365)).order('date'),
+    tab === 'today' ? sb.from('foods').select('*').eq('archived', false).order('name') : Promise.resolve({ data: [] }),
+    tab === 'today' ? sb.from('favourites').select('food_id').eq('client_id', client.id) : Promise.resolve({ data: [] }),
+    tab === 'today' ? sb.from('meals').select('food_id').eq('client_id', client.id).not('food_id', 'is', null).order('created_at', { ascending: false }).limit(60) : Promise.resolve({ data: [] }),
+    tab === 'progress' ? sb.from('measurements').select('*').eq('client_id', client.id).order('date') : Promise.resolve({ data: [] }),
   ]);
+  const recents = [...new Set(((recentMeals ?? []) as { food_id: string }[]).map((m) => m.food_id))].slice(0, 20);
   const allLogs = (logs ?? []) as Log[];
   const log = allLogs.find((l) => l.date === date);
   const T = client.targets ?? draftTargets(client);
   const t = totals((meals ?? []) as Meal[]);
   const left = T.kcal - t.kcal;
   const tabLink = (k: string, l: string) => <Link href={`/me?tab=${k}${k === 'today' ? `&date=${date}` : ''}`} aria-current={tab === k ? 'page' : undefined}>{l}</Link>;
+  const metric = (METRICS.some(([k]) => k === searchParams.metric) ? searchParams.metric : 'weight') as MetricKey;
 
   return (
     <main className="narrow stack">
@@ -36,8 +46,9 @@ export default async function Me({ searchParams }: { searchParams: { date?: stri
         <div><h1 style={{ fontSize: 28 }}>Hi {client.name?.split(' ')[0] ?? 'there'}</h1><p className="small muted">{GOALS[client.goal ?? 'lose']}{client.status !== 'active' ? ' · plan not started yet' : ''}</p></div>
         {process.env.NEXT_PUBLIC_WHATSAPP_NUMBER && <a className="btn sm ghost" href={`https://wa.me/${process.env.NEXT_PUBLIC_WHATSAPP_NUMBER}`}>Open WhatsApp</a>}
       </div>
-      <div className="seg">{tabLink('today', 'Today')}{tabLink('plan', 'My plan')}{tabLink('progress', 'Progress')}</div>
-      {searchParams.saved && <p className="banner">Check-in saved.</p>}
+      <div className="seg">{tabLink('today', 'Today')}{tabLink('plan', 'Diet chart')}{tabLink('progress', 'Progress')}{tabLink('tools', 'Calculators')}</div>
+      {searchParams.saved && <p className="banner">{searchParams.saved === 'measure' ? 'Measurements saved.' : searchParams.saved === 'meal' ? 'Meal logged from your diet chart.' : 'Check-in saved.'}</p>}
+      {searchParams.error === 'measure' && <p className="banner err">Some measurements were out of range. Use kg for weight and cm for the tape measurements.</p>}
       {searchParams.error === 'checkin' && <p className="banner err">Some check-in values were out of range. Check weight, water and steps.</p>}
 
       {tab === 'today' && (<>
@@ -58,29 +69,13 @@ export default async function Me({ searchParams }: { searchParams: { date?: stri
           <div className="row between"><h3>Meals</h3><span className="small muted">Or send a photo on WhatsApp</span></div>
           {(meals ?? []).length ? (meals as Meal[]).map((m) => (
             <div className="meal" key={m.id}>
-              <span><b>{SLOT_LABEL[m.slot]}</b><span className={`src ${m.source}`}>{m.source === 'whatsapp' ? 'WhatsApp' : m.source === 'coach' ? 'Coach' : 'Web'}</span><br /><span className="small">{m.name}</span></span>
+              <span><b>{SLOT_LABEL[m.slot]}</b><span className={`src ${m.source}`}>{m.source === 'whatsapp' ? 'WhatsApp' : m.source === 'coach' ? 'Coach' : 'Web'}</span><br /><span className="small">{m.name}{m.qty ? ` · ${Number(m.qty)} ${m.unit ?? ''}` : ''}</span></span>
               <span className="row small num" style={{ gap: 6 }}>{Math.round(Number(m.kcal))} kcal
                 <form action={deleteMeal}><input type="hidden" name="id" value={m.id} /><button className="linkbtn" aria-label={`Remove ${m.name}`}>✕</button></form></span>
             </div>
           )) : <p className="small muted">Nothing logged for this day yet.</p>}
-          <form action={addMeal} className="addrow">
-            <input type="hidden" name="date" value={date} />
-            <select name="food" aria-label="Food">{FOODS.map((f) => <option key={f.key} value={f.key}>{f.name} · {f.kcal} kcal/{f.unit}</option>)}</select>
-            <input name="qty" type="number" step="0.5" min="0.5" defaultValue="1" aria-label="Quantity" />
-            <select name="slot" aria-label="Meal" defaultValue={date === today ? undefined : 'lunch'}>{MEAL_SLOTS.map((s) => <option key={s} value={s}>{SLOT_LABEL[s]}</option>)}</select>
-            <button className="btn sm">Add</button>
-          </form>
-          <details><summary className="small" style={{ cursor: 'pointer' }}>Add something not in the list</summary>
-            <form action={addMeal} className="grid3" style={{ marginTop: 8 }}>
-              <input type="hidden" name="date" value={date} />
-              <input name="custom_name" type="text" placeholder="Food" required style={{ gridColumn: '1/-1' }} />
-              <input name="custom_kcal" type="number" placeholder="kcal" required /><input name="custom_p" type="number" placeholder="Protein g" /><input name="custom_c" type="number" placeholder="Carbs g" />
-              <input name="custom_f" type="number" placeholder="Fat g" />
-              <select name="slot" aria-label="Meal">{MEAL_SLOTS.map((s) => <option key={s} value={s}>{SLOT_LABEL[s]}</option>)}</select>
-              <button className="btn sm">Add</button>
-            </form>
-          </details>
         </div>
+        <MealLogger foods={(foods ?? []) as Food[]} favourites={((favs ?? []) as { food_id: string }[]).map((f) => f.food_id)} recents={recents} date={date} defaultSlot={date === today ? slotForTime(istHourMinute()) : 'lunch'} />
 
         <Workout plan={client.workout_plan?.[weekdayShort(date)] ?? []} day={weekdayShort(date)} />
 
@@ -111,14 +106,22 @@ export default async function Me({ searchParams }: { searchParams: { date?: stri
           </div>
         </div>
         {client.coach_note && <div className="card"><h3>From Nandita</h3><div className="note">{client.coach_note}</div></div>}
-        <div className="card"><h3>Meal plan</h3>{client.meal_plan?.length ? client.meal_plan.map((m, i) => <div className="meal" key={i}><span><b>{m.meal}</b><br /><span className="muted" style={{ whiteSpace: 'pre-wrap' }}>{m.items}</span></span></div>) : <p className="small muted">Your meal plan appears here once Nandita writes it.</p>}</div>
+        <PlanMeals client={client} targets={T} today={today} />
         <div className="card"><h3>Weekly workouts</h3>{WEEKDAYS.map((d) => {
           const x = client.workout_plan?.[d] ?? [];
           return <div key={d} className="meal" style={{ gridTemplateColumns: '1fr' }}><b>{d}{!x.length && <span className="small muted"> · Rest</span>}</b>{x.map((e, i) => <div className="ex" key={i}><span>{e.n}</span><span className="muted num">{e.s} × {e.r}</span></div>)}</div>;
         })}</div>
       </>)}
 
-      {tab === 'progress' && <Progress logs={allLogs} start={Number(client.weight_kg)} target={client.target_weight} today={today} />}
+      {tab === 'progress' && (<>
+        <ProgressView rows={mergeRows(allLogs, (ms ?? []) as Measurement[])} metric={metric} hrefFor={(m) => `/me?tab=progress&metric=${m}`} deleteAction={deleteMeasurement} startWeight={Number(client.weight_kg)} targetWeight={client.target_weight} />
+        <MeasureForm today={today} />
+        <Streak logs={allLogs} today={today} />
+      </>)}
+      {tab === 'tools' && (<>
+        <Calculators prefill={{ sex: (client.sex ?? 'f') as 'f' | 'm', age: String(client.age ?? ''), hcm: String(client.height_cm ?? ''), w: String(allLogs.filter((l) => l.weight).pop()?.weight ?? client.weight_kg ?? ''), act: client.activity ?? 'light', tw: String(client.target_weight ?? ''), kcal: String(T.kcal) }} onSaveBodyFat={saveBodyFat} />
+        <p className="small muted">Your details are filled in from your profile. Body fat from the tape method can be saved to your progress.</p>
+      </>)}
     </main>
   );
 }
@@ -132,20 +135,52 @@ function Workout({ plan, day }: { plan: { n: string; s: string | number; r: stri
   );
 }
 
-function Progress({ logs, start, target, today }: { logs: Log[]; start: number; target: number | null; today: string }) {
-  const ws = logs.filter((l) => l.weight).map((l) => ({ date: l.date, weight: Number(l.weight) }));
-  const first = ws[0]?.weight ?? start, now = ws[ws.length - 1]?.weight ?? first;
+function Streak({ logs, today }: { logs: Log[]; today: string }) {
   const days = [...Array(14)].map((_, i) => addDays(today, i - 13));
   const logged = days.filter((d) => logs.some((l) => l.date === d)).length;
-  return (<>
-    <div className="grid3">
-      <div className="res"><span className="small muted">Start</span><span className="big num" style={{ fontSize: 24 }}>{first}</span><span className="small muted">kg</span></div>
-      <div className="res"><span className="small muted">Now</span><span className="big num" style={{ fontSize: 24 }}>{now}</span><span className="small muted">kg</span></div>
-      <div className="res"><span className="small muted">Change</span><span className="big num" style={{ fontSize: 24 }}>{now - first > 0 ? '+' : ''}{Math.round((now - first) * 10) / 10}</span><span className="small muted">kg{target ? ` · goal ${target}` : ''}</span></div>
-    </div>
-    <div className="card"><h3>Weight</h3><WeightChart points={ws} /></div>
-    <div className="card"><div className="row between"><h3>Last 14 days</h3><span className={`pill ${logged >= 10 ? 'good' : logged >= 6 ? '' : 'warn'}`}>{logged}/14 days checked in</span></div></div>
-  </>);
+  return <div className="card"><div className="row between"><h3>Last 14 days</h3><span className={`pill ${logged >= 10 ? 'good' : logged >= 6 ? '' : 'warn'}`}>{logged}/14 days checked in</span></div></div>;
+}
+
+function MeasureForm({ today }: { today: string }) {
+  const field = (name: string, label: string, unit: string, step = '0.1') => (
+    <label className="f">{label}<span className="unit"><input name={name} type="number" step={step} inputMode="decimal" /><em>{unit}</em></span></label>
+  );
+  return (
+    <form action={saveMeasurement} className="card">
+      <div className="row between"><h3>Add measurements</h3><input name="date" type="date" defaultValue={today} max={today} style={{ width: 'auto' }} aria-label="Date" /></div>
+      <p className="small muted">Measure in the morning, before food. Fill in only what you measured.</p>
+      <div className="grid3">
+        {field('weight', 'Weight', 'kg')}{field('waist', 'Waist', 'cm')}{field('hip', 'Hip', 'cm')}
+        {field('chest', 'Chest', 'cm')}{field('arm', 'Arm', 'cm')}{field('thigh', 'Thigh', 'cm')}
+        {field('neck', 'Neck', 'cm')}{field('body_fat', 'Body fat', '%')}
+      </div>
+      <button className="btn">Save measurements</button>
+    </form>
+  );
+}
+
+function PlanMeals({ client, targets, today }: { client: Client; targets: Targets; today: string }) {
+  if (client.diet_chart?.length) {
+    return <DietChartView chart={client.diet_chart} targets={targets} logForm={(i) => (
+      <form action={logChartMeal} className="row">
+        <input type="hidden" name="meal" value={i} /><input type="hidden" name="date" value={today} />
+        <select name="slot" defaultValue={guessSlot(client.diet_chart[i].meal)} aria-label="Log as" style={{ width: 'auto' }}>{MEAL_SLOTS.map((s) => <option key={s} value={s}>{SLOT_LABEL[s]}</option>)}</select>
+        <button className="btn sm ghost">I ate this today</button>
+      </form>
+    )} />;
+  }
+  if (client.meal_plan?.length) {
+    return <div className="card"><h3>Meal plan</h3>{client.meal_plan.map((m, i) => <div className="meal" key={i}><span><b>{m.meal}</b><br /><span className="muted" style={{ whiteSpace: 'pre-wrap' }}>{m.items}</span></span></div>)}</div>;
+  }
+  return <div className="card"><h3>Diet chart</h3><p className="small muted">Your diet chart appears here once Nandita writes it.</p></div>;
+}
+
+function guessSlot(meal: string): string {
+  const m = meal.toLowerCase();
+  if (/break|morning|early/.test(m)) return 'breakfast';
+  if (/lunch/.test(m)) return 'lunch';
+  if (/dinner|night/.test(m)) return 'dinner';
+  return 'snacks';
 }
 
 function Intake({ error }: { error: boolean }) {

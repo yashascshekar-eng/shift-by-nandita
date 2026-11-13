@@ -32,7 +32,7 @@ export default async function Coach({ searchParams }: { searchParams: { show?: s
     <main className="wrap stack" style={{ paddingBottom: 48 }}>
       <div className="row between">
         <div><h1 style={{ fontSize: 28 }}>Clients</h1><p className="small muted">{all.filter((c) => c.status === 'active').length} active · {review} to review · {quiet} quiet 2+ days</p></div>
-        <div className="seg"><Link href="/coach" aria-current={show === 'current' ? 'page' : undefined}>Current</Link><Link href="/coach?show=all" aria-current={show === 'all' ? 'page' : undefined}>All</Link></div>
+        <div className="seg"><Link href="/coach/foods">Food catalogue</Link><Link href="/coach" aria-current={show === 'current' ? 'page' : undefined}>Current</Link><Link href="/coach?show=all" aria-current={show === 'all' ? 'page' : undefined}>All</Link></div>
       </div>
       {clients.length ? (
         <div className="roster">{clients.map((c) => {

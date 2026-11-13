@@ -3,12 +3,15 @@ import { useState } from 'react';
 import { ACTIVITY, SPLITS, activityMult, bmr, macros, navyBodyFat, type SplitKey, type Sex } from '@/lib/nutrition';
 
 const METS: [string, number][] = [['Walking, brisk', 4.3], ['Running, 8 km/h', 8.3], ['Cycling, moderate', 6.8], ['Strength training', 5], ['Yoga', 2.5], ['Swimming', 7], ['Skipping', 11], ['Badminton', 5.5], ['Dance workout', 5], ['HIIT', 8]];
-const TABS = [['bmr', 'BMR & TDEE'], ['bf', 'Body fat'], ['goal', 'Goal'], ['macro', 'Macros'], ['burn', 'Calories burned']] as const;
+const TABS = [['bmr', 'BMR'], ['tdee', 'TDEE'], ['bf', 'Body fat'], ['goal', 'Goal'], ['macro', 'Macros'], ['burn', 'Calories burned']] as const;
 type Tab = (typeof TABS)[number][0];
 
-export function Calculators() {
+type Prefill = Partial<{ sex: Sex; age: string; hcm: string; w: string; act: string; tw: string; kcal: string }>;
+
+export function Calculators({ prefill = {}, onSaveBodyFat }: { prefill?: Prefill; onSaveBodyFat?: (v: number) => Promise<boolean> }) {
   const [tab, setTab] = useState<Tab>('bmr');
-  const [v, setV] = useState({ sex: 'f' as Sex, age: '30', hcm: '162', w: '62', bf: '', act: 'light', waist: '80', neck: '33', hip: '98', tw: '56', weeks: '12', kcal: '1800', split: 'moderate' as SplitKey, met: '0', min: '30' });
+  const [saved, setSaved] = useState('');
+  const [v, setV] = useState({ sex: 'f' as Sex, age: '30', hcm: '162', w: '62', bf: '', act: 'light', waist: '80', neck: '33', hip: '98', tw: '56', weeks: '12', kcal: '1800', split: 'moderate' as SplitKey, met: '0', min: '30', ...prefill });
   const n = (k: keyof typeof v) => parseFloat(v[k] as string) || 0;
   const set = (k: keyof typeof v) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setV({ ...v, [k]: e.target.value });
   const num = (k: keyof typeof v, label: string, unit = '') => (
@@ -33,12 +36,27 @@ export function Calculators() {
       </div>
       <p className="small muted">{n('bf') ? 'Katch–McArdle formula, using your lean mass.' : 'Mifflin–St Jeor formula. Add body fat for a lean-mass estimate.'}</p>
     </>);
+  } else if (tab === 'tdee') {
+    body = (<>
+      <p className="small muted">Total daily energy expenditure: your BMR of <b className="num">{Math.round(b)}</b> kcal times how active you are. Change age, height and weight on the BMR tab.</p>
+      <div className="scroll"><table className="tbl">
+        <thead><tr><th>Activity</th><th>Maintain</th><th>Lose fat (−20%)</th><th>Gain (+10%)</th></tr></thead>
+        <tbody>{ACTIVITY.map((a) => {
+          const t = b * a.mult;
+          return <tr key={a.key} style={a.key === v.act ? { background: 'var(--surface-2)', fontWeight: 700 } : undefined}><td>{a.label}</td><td>{Math.round(t)}</td><td>{Math.round(t * 0.8)}</td><td>{Math.round(t * 1.1)}</td></tr>;
+        })}</tbody>
+      </table></div>
+      <p className="small muted">kcal a day. Your selected activity level is highlighted.</p>
+    </>);
   } else if (tab === 'bf') {
     const bf = navyBodyFat(v.sex, n('waist'), n('neck'), n('hcm'), n('hip'));
     body = (<>
       {sexSeg}
       <div className="grid2">{num('waist', v.sex === 'f' ? 'Waist, narrowest point' : 'Waist, at the navel', 'cm')}{num('neck', 'Neck, below the larynx', 'cm')}{v.sex === 'f' && num('hip', 'Hips, widest point', 'cm')}{num('hcm', 'Height', 'cm')}</div>
       <div className="res"><span className="small muted">Estimated body fat</span><span className="big num">{isFinite(bf) && bf > 2 && bf < 70 ? `${Math.round(bf * 10) / 10}%` : '–'}</span><span className="small muted">US Navy tape method · measure relaxed, tape snug not tight</span></div>
+      {onSaveBodyFat && isFinite(bf) && bf > 2 && bf < 70 && (
+        <div className="row"><button type="button" className="btn sm" onClick={async () => setSaved((await onSaveBodyFat(bf)) ? 'Saved to your progress for today.' : 'Could not save. Try again.')}>Save to my progress</button>{saved && <span className="small" role="status">{saved}</span>}</div>
+      )}
     </>);
   } else if (tab === 'goal') {
     const delta = ((n('tw') - n('w')) * 7700) / (Math.max(1, n('weeks')) * 7);

@@ -241,3 +241,34 @@ describe('security', () => {
     expect(normalize({ id: '1', from: '9', type: 'image', image: { id: 'x', caption: 'lunch' } })).toMatchObject({ type: 'image', imageId: 'x', caption: 'lunch' });
   });
 });
+
+import { scaleFood, chartItem, chartTotal, chartToText } from '@/lib/catalogue';
+import { mergeRows } from '@/components/Progress';
+
+describe('catalogue and diet chart', () => {
+  const oats = { id: 'f1', name: 'Raw rice / oats / wheat flour / rava', serving_qty: 50, unit: 'g', kcal: 180, p: 5.7, c: 37.5, f: 0.8, food_type: 'veg' as const, category: 'Grains', owner_client_id: null };
+  const egg = { id: 'f2', name: 'Egg', serving_qty: 1, unit: 'piece', kcal: 72, p: 6, c: 0, f: 4.8, food_type: 'egg' as const, category: 'Eggs', owner_client_id: null };
+  it('scales a food to the amount eaten', () => {
+    expect(scaleFood(oats, 75)).toEqual({ kcal: 270, p: 8.6, c: 56.3, f: 1.2 });
+    expect(scaleFood(egg, 2)).toEqual({ kcal: 144, p: 12, c: 0, f: 9.6 });
+  });
+  it('totals a chart and renders it for WhatsApp', () => {
+    const chart = [{ meal: 'Breakfast', time: '8:30', items: [chartItem(oats, 50), chartItem(egg, 2)] }, { meal: 'Dinner', items: [] }];
+    expect(chartTotal(chart)).toEqual({ kcal: 324, p: 17.7, c: 37.5, f: 10.4 });
+    expect(chartToText(chart)).toBe('*Breakfast* (8:30)\n• Raw rice / oats / wheat flour / rava, 50 g\n• Egg, 2 pieces');
+  });
+  it('sends the diet chart when the client asks for their plan', async () => {
+    const { store, wa, bot } = setup();
+    await onboard(bot);
+    const c = (await store.getClientByPhone(PHONE))!;
+    c.diet_chart = [{ meal: 'Breakfast', time: '8:30', items: [chartItem(egg, 2)] }];
+    await bot.handle(text('plan'));
+    expect(wa.last.body).toContain('Egg, 2 pieces');
+    expect(wa.last.body).toContain('144 kcal');
+  });
+  it('merges check-in weights with tape measurements by date', () => {
+    const rows = mergeRows([{ date: '2026-11-01', weight: 68.4 }, { date: '2026-11-08', weight: 67.9 }],
+      [{ client_id: 'c', date: '2026-11-08', weight: null, waist: 84, hip: null, chest: null, arm: null, thigh: null, neck: null, body_fat: 31 }]);
+    expect(rows.map((r) => [r.date, r.weight, r.waist])).toEqual([['2026-11-08', 67.9, 84], ['2026-11-01', 68.4, null]]);
+  });
+});

@@ -4,9 +4,10 @@ import { z } from 'zod';
 import { requireCoach, supabaseAdmin } from '@/lib/supabase/server';
 import { makeRuntime } from '@/lib/whatsapp/factory';
 import { sendCoachMessage } from '@/lib/whatsapp/bot';
-import { draftPlan, aiEnabled, type PlanDraft } from '@/lib/ai';
+import { draftPlan, aiEnabled } from '@/lib/ai';
 import { targetsFor, WEEKDAYS, type SplitKey } from '@/lib/nutrition';
-import type { Client } from '@/lib/types';
+import { chartItem, foodSchema } from '@/lib/catalogue';
+import type { ChartMeal, Client, Food } from '@/lib/types';
 
 const COACH = () => process.env.COACH_NAME || 'Nandita';
 
@@ -64,33 +65,83 @@ export async function saveTargets(_p: ActionResult | null, form: FormData): Prom
   return { ok: !err, message: err ?? 'Targets saved and sent on WhatsApp.' };
 }
 
+const ChartSchema = z.array(z.object({
+  meal: z.string().trim().min(1).max(40), time: z.string().max(10).optional(),
+  items: z.array(z.object({ food_id: z.string().nullable(), name: z.string().max(80), qty: z.number().min(0).max(5000), unit: z.string().max(12), kcal: z.number(), p: z.number(), c: z.number(), f: z.number() })).max(15),
+})).max(8);
+
 export async function savePlans(_p: ActionResult | null, form: FormData): Promise<ActionResult> {
   await requireCoach();
   const id = String(form.get('client_id'));
-  const meals: { meal: string; items: string }[] = [];
-  for (let i = 0; i < 8; i++) {
-    const meal = String(form.get(`meal_${i}`) ?? '').trim(), items = String(form.get(`items_${i}`) ?? '').trim();
-    if (meal || items) meals.push({ meal: meal.slice(0, 40) || 'Meal', items: items.slice(0, 600) });
-  }
+  let raw: unknown;
+  try { raw = JSON.parse(String(form.get('diet_chart') || '[]')); } catch { raw = null; }
+  const parsed = ChartSchema.safeParse(raw);
+  if (!parsed.success) return { ok: false, message: 'The diet chart has an invalid entry. Check meal names and amounts.' };
+  // Recompute every item's macros from the catalogue so the saved chart can't drift from the foods.
+  const ids = [...new Set(parsed.data.flatMap((m) => m.items.map((i) => i.food_id)).filter(Boolean))] as string[];
+  const { data: foods } = ids.length ? await supabaseAdmin().from('foods').select('*').in('id', ids) : { data: [] };
+  const byId = new Map(((foods ?? []) as Food[]).map((f) => [f.id, f]));
+  const chart: ChartMeal[] = parsed.data
+    .map((m) => ({ meal: m.meal, time: m.time || undefined, items: m.items.filter((i) => i.qty > 0).map((i) => (i.food_id && byId.get(i.food_id) ? chartItem(byId.get(i.food_id)!, i.qty) : i)) }))
+    .filter((m) => m.items.length || m.meal);
+
   const workout: Record<string, { n: string; s: string; r: string }[]> = {};
   for (const d of WEEKDAYS) {
     const rows = String(form.get(`wo_${d}`) ?? '').split('\n').map((l) => l.split('|').map((x) => x.trim())).filter((r) => r[0]);
     if (rows.length) workout[d] = rows.slice(0, 15).map((r) => ({ n: r[0].slice(0, 60), s: (r[1] || '3').slice(0, 10), r: (r[2] || '10').slice(0, 20) }));
   }
-  await supabaseAdmin().from('clients').update({ meal_plan: meals, workout_plan: workout }).eq('id', id);
+  await supabaseAdmin().from('clients').update({ diet_chart: chart, workout_plan: workout }).eq('id', id);
   revalidatePath(`/coach/${id}`);
   if (!form.get('notify')) return { ok: true, message: 'Plan saved.' };
-  const err = await notify(await getClient(id), 'Your meal and workout plan has been updated. Reply "plan" to see today’s, or open shiftbynandita.com/me.');
+  const err = await notify(await getClient(id), 'Your diet chart and workout plan have been updated. Reply "plan" to see today\u2019s, or open shiftbynandita.com/me.');
   return { ok: !err, message: err ?? 'Plan saved and the client was told on WhatsApp.' };
 }
 
-export async function draftPlanWithAI(clientId: string): Promise<{ draft: PlanDraft | null; message: string }> {
+export async function draftPlanWithAI(clientId: string): Promise<{ chart: ChartMeal[] | null; workout: Record<string, unknown> | null; message: string }> {
   await requireCoach();
-  if (!aiEnabled()) return { draft: null, message: 'Add an ANTHROPIC_API_KEY to use AI drafts.' };
+  if (!aiEnabled()) return { chart: null, workout: null, message: 'Add an ANTHROPIC_API_KEY to use AI drafts.' };
   const c = await getClient(clientId);
   const t = c.targets ?? targetsFor(1600, 'moderate', 8, 8000, false);
-  const draft = await draftPlan(c as unknown as Record<string, unknown>, t.kcal, t.p);
-  return draft ? { draft, message: 'Draft ready. Review and edit it, then save.' } : { draft: null, message: 'The AI draft failed. Try again in a moment.' };
+  const allowed = c.diet === 'nonveg' ? ['veg', 'egg', 'nonveg'] : c.diet === 'egg' ? ['veg', 'egg'] : ['veg'];
+  const { data } = await supabaseAdmin().from('foods').select('*').eq('archived', false).or(`owner_client_id.is.null,owner_client_id.eq.${c.id}`).in('food_type', allowed).order('category');
+  const catalogue = ((data ?? []) as Food[]).slice(0, 250);
+  const draft = await draftPlan(c as unknown as Record<string, unknown>, t.kcal, t.p, catalogue);
+  if (!draft) return { chart: null, workout: null, message: 'The AI draft failed. Try again in a moment.' };
+  const chart: ChartMeal[] = draft.diet_chart.map((m) => ({
+    meal: m.meal, time: m.time,
+    items: m.items.map((i) => { const f = catalogue[Number(i.id.replace(/\D/g, ''))]; return f ? chartItem(f, i.qty) : null; }).filter(Boolean) as ChartMeal['items'],
+  }));
+  return { chart, workout: draft.workout_plan, message: 'Draft ready. Review the amounts, then save.' };
+}
+
+// ---------- catalogue management ----------
+export async function saveFood(_p: ActionResult | null, form: FormData): Promise<ActionResult> {
+  await requireCoach();
+  const num = (k: string) => Number(form.get(k));
+  const s = foodSchema.safeParse({
+    name: String(form.get('name') || ''), serving_qty: num('serving_qty'), unit: String(form.get('unit') || 'g'),
+    kcal: num('kcal'), p: num('p') || 0, c: num('c') || 0, f: num('f') || 0,
+    food_type: String(form.get('food_type') || 'veg'), category: String(form.get('category') || 'Other'),
+  });
+  if (!s.success) return { ok: false, message: 'Check the name, quantity and calories.' };
+  const id = String(form.get('id') || '');
+  const admin = supabaseAdmin();
+  const { error } = id ? await admin.from('foods').update(s.data).eq('id', id) : await admin.from('foods').insert({ ...s.data, owner_client_id: null });
+  revalidatePath('/coach/foods');
+  return error ? { ok: false, message: 'Could not save the food.' } : { ok: true, message: id ? `Updated ${s.data.name}.` : `Added ${s.data.name} to the catalogue.` };
+}
+
+export async function setFoodArchived(form: FormData) {
+  await requireCoach();
+  await supabaseAdmin().from('foods').update({ archived: form.get('archived') === '1' }).eq('id', String(form.get('id')));
+  revalidatePath('/coach/foods');
+}
+
+/** Make a client's custom food part of the shared catalogue. */
+export async function promoteFood(form: FormData) {
+  await requireCoach();
+  await supabaseAdmin().from('foods').update({ owner_client_id: null }).eq('id', String(form.get('id')));
+  revalidatePath('/coach/foods');
 }
 
 export async function saveStatus(_p: ActionResult | null, form: FormData): Promise<ActionResult> {

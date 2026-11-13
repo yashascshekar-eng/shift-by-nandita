@@ -21,6 +21,7 @@ export interface Client {
   targets: Targets | null;
   coach_note: string | null;
   meal_plan: { meal: string; items: string }[];
+  diet_chart: ChartMeal[];
   workout_plan: Record<string, { n: string; s: string | number; r: string }[]>;
   last_inbound_at: string | null;
   last_log_date: string | null;
@@ -53,7 +54,43 @@ export interface Meal {
   f: number;
   source: 'whatsapp' | 'web' | 'coach';
   photo_path?: string | null;
+  food_id?: string | null;
+  qty?: number | null;
+  unit?: string | null;
   created_at?: string;
 }
 
 export interface Session { state: string; data: Record<string, unknown> }
+
+export interface Food {
+  id: string;
+  name: string;
+  serving_qty: number;
+  unit: string;
+  kcal: number;
+  p: number;
+  c: number;
+  f: number;
+  food_type: 'veg' | 'egg' | 'nonveg';
+  category: string;
+  owner_client_id: string | null;
+  archived?: boolean;
+}
+
+export interface ChartItem { food_id: string | null; name: string; qty: number; unit: string; kcal: number; p: number; c: number; f: number }
+export interface ChartMeal { meal: string; time?: string; items: ChartItem[] }
+
+export interface Measurement {
+  id?: string;
+  client_id: string;
+  date: string;
+  weight: number | null;
+  waist: number | null;
+  hip: number | null;
+  chest: number | null;
+  arm: number | null;
+  thigh: number | null;
+  neck: number | null;
+  body_fat: number | null;
+  note?: string | null;
+}

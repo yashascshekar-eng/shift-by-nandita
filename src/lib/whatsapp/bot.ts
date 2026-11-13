@@ -4,6 +4,7 @@ import type { WhatsAppSender } from './api';
 import type { Client, Session } from '../types';
 import type { MealItem } from '../foods';
 import { parseFoodText, sumItems, describeItems } from '../foods';
+import { chartToText, chartTotal } from '../catalogue';
 import type { Estimate } from '../ai';
 import { ACTIVITY, draftTargets, ENERGY, r0, totals } from '../nutrition';
 import { istDate, istHourMinute, slotForTime, weekdayShort, within24h } from '../dates';
@@ -380,11 +381,12 @@ export class ShiftBot {
   async sendPlan(to: string, client: Client) {
     const date = istDate(this.now());
     const wo = client.workout_plan?.[weekdayShort(date)] ?? [];
-    const meals = client.meal_plan ?? [];
-    if (!meals.length && !wo.length) return this.wa.text(to, `${this.coach} is still preparing your plan. You’ll get it here soon.`);
-    const m = meals.map((x) => `*${x.meal}* ${x.items}`).join('\n');
+    const chart = client.diet_chart ?? [];
+    const meals = chartToText(chart) || (client.meal_plan ?? []).map((x) => `*${x.meal}* ${x.items}`).join('\n');
+    if (!meals && !wo.length) return this.wa.text(to, `${this.coach} is still preparing your plan. You\u2019ll get it here soon.`);
+    const total = chart.length ? chartTotal(chart) : null;
     const w = wo.length ? wo.map((e) => `• ${e.n} ${e.s} × ${e.r}`).join('\n') : 'Rest day. A 30 minute walk still counts.';
-    return this.wa.text(to, `${m ? 'Today’s meals\n' + m + '\n\n' : ''}Workout (${weekdayShort(date)})\n${w}`);
+    return this.wa.text(to, `${meals ? 'Today\u2019s diet chart\n\n' + meals + (total ? `\n\nTotal ≈ ${total.kcal} kcal · ${Math.round(total.p)} g protein` : '') + '\n\n' : ''}Workout (${weekdayShort(date)})\n${w}`);
   }
 
   private slot() { return slotForTime(istHourMinute(this.now())); }
