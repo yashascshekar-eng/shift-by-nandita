@@ -27,8 +27,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <Link className="mark" href="/">SHIFT<small>by Nandita</small></Link>
           <div className="navlinks">
             <Link href="/tools">Calculators</Link>
-            {me?.role === 'coach' && <Link href="/coach">Clients</Link>}
-            {me ? <Link href="/me">My plan</Link> : <Link href="/login">Log in</Link>}
+            {me?.role === 'coach' && <><Link href="/coach">Clients</Link><Link href="/coach/foods">Foods</Link></>}
+            {me?.role === 'client' && <Link href="/me">My plan</Link>}
+            {!me && <Link href="/login">Log in</Link>}
+            {me && <Link href="/account">Account</Link>}
             {me && <form action={signOut}><button type="submit">Log out</button></form>}
           </div>
         </nav>

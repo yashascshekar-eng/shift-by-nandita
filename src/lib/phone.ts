@@ -9,6 +9,9 @@ export function phoneDigits(input: string): string | null {
   return null;
 }
 
+/** Nandita's WhatsApp number: an account with this number is the coach. Override with COACH_PHONE. */
+export const coachPhone = () => (process.env.COACH_PHONE || '919739460182').replace(/\D/g, '');
+
 /** Internal login address for number + password accounts. No mail is ever sent to it. */
 export function loginEmail(digits: string): string {
   return `${digits}@login.shiftbynandita.com`;

@@ -1,7 +1,7 @@
 'use server';
 import { redirect } from 'next/navigation';
 import { supabaseUser, supabaseAdmin } from '@/lib/supabase/server';
-import { phoneDigits, loginEmail } from '@/lib/phone';
+import { phoneDigits, loginEmail, coachPhone } from '@/lib/phone';
 
 export type LoginState = { mode: 'login' | 'signup' | 'code'; phone?: string; error?: string; next?: string };
 
@@ -32,7 +32,7 @@ export async function passwordStep(prev: LoginState, form: FormData): Promise<Lo
       const exists = /already|registered|exists/i.test(error?.message ?? '');
       return { mode: exists ? 'login' : 'signup', next, phone: digits, error: exists ? 'This number already has an account. Log in instead.' : 'We couldn’t create the account. Try again in a minute.' };
     }
-    await admin.from('profiles').insert({ id: data.user.id, phone: digits });
+    await admin.from('profiles').insert({ id: data.user.id, phone: digits, role: digits === coachPhone() ? 'coach' : 'client' });
   }
 
   const { data, error } = await supabaseUser().auth.signInWithPassword({ email, password });

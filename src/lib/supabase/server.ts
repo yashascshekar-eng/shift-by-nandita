@@ -3,6 +3,7 @@ import { createClient as createAdmin } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import type { Client } from '../types';
+import { coachPhone } from '../phone';
 
 /** Supabase client acting as the signed-in user (RLS applies). */
 export function supabaseUser() {
@@ -40,7 +41,12 @@ export async function currentRole(): Promise<Me | null> {
   const { data } = await supabaseAdmin().from('profiles').select('role, phone').eq('id', user.id).maybeSingle();
   const phoneVerified = Boolean(user.phone_confirmed_at);
   const phone = data?.phone ?? (phoneVerified ? user.phone ?? '' : '');
-  return { userId: user.id, phone, phoneVerified, role: (data?.role as 'client' | 'coach') ?? 'client' };
+  let role = (data?.role as 'client' | 'coach') ?? 'client';
+  if (role !== 'coach' && phoneVerified && phone === coachPhone()) {
+    await supabaseAdmin().from('profiles').update({ role: 'coach' }).eq('id', user.id);
+    role = 'coach';
+  }
+  return { userId: user.id, phone, phoneVerified, role };
 }
 
 export async function requireCoach() {
