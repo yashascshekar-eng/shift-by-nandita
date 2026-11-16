@@ -5,6 +5,7 @@ import { addDays, istDate, prettyDate } from '@/lib/dates';
 import { ACTIVITY, DIETS, ENERGY, GOALS, SLOT_LABEL, SPLITS, activityMult, bmr, draftTargets, macros, totals, type Sex, type SplitKey } from '@/lib/nutrition';
 import { within24h } from '@/lib/dates';
 import { aiEnabled } from '@/lib/ai';
+import { whatsappReady } from '@/lib/whatsapp/api';
 import { WeightChart } from '@/components/Charts';
 import { ActionForm, SubmitButton } from '@/components/ActionForm';
 import type { Client, Food, Log, Meal, Measurement } from '@/lib/types';
@@ -34,7 +35,7 @@ export default async function ClientPage({ params, searchParams }: { params: { i
         <div className="row"><span className="pill">{c.status}</span><span className={`pill ${st.tone}`}>{st.label}</span></div>
       </div>
       <nav className="seg tabs">{TABS.map(([k, l]) => <Link key={k} href={`/coach/${c.id}?tab=${k}`} aria-current={tab === k ? 'page' : undefined}>{l}</Link>)}</nav>
-      <p className="small muted">{windowOpen ? 'Messaged in the last 24 hours: your messages go as normal WhatsApp replies.' : 'No message in the last 24 hours: your messages go as the coach template.'}</p>
+      <p className="small muted">{!whatsappReady() ? 'WhatsApp isn\u2019t connected yet: your replies and messages are saved and show in the client\u2019s app.' : windowOpen ? 'Messaged in the last 24 hours: your messages go as normal WhatsApp replies.' : 'No message in the last 24 hours: your messages go as the coach template.'}</p>
       {tab === 'checkins' && <Checkins c={c} />}
       {tab === 'targets' && <Targets c={c} />}
       {tab === 'plan' && <Plan c={c} />}
@@ -129,8 +130,8 @@ async function Chat({ c }: { c: Client }) {
   return (<>
     <ActionForm action={messageClient}>
       <input type="hidden" name="client_id" value={c.id} />
-      <label className="f">Message {c.name?.split(' ')[0]}<textarea name="text" placeholder="Goes to their WhatsApp from the SHIFT number" /></label>
-      <SubmitButton>Send on WhatsApp</SubmitButton>
+      <label className="f">Message {c.name?.split(' ')[0]}<textarea name="text" placeholder={whatsappReady() ? 'Goes to their WhatsApp from the SHIFT number, and onto today\u2019s check-in' : 'Shows on their check-in for today in the app'} /></label>
+      <SubmitButton>{whatsappReady() ? 'Send' : 'Send in app'}</SubmitButton>
     </ActionForm>
     <div className="card"><h3>Recent messages</h3>
       {(data ?? []).length ? (data ?? []).map((m) => (

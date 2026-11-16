@@ -8,6 +8,8 @@ import { draftPlan, aiEnabled } from '@/lib/ai';
 import { targetsFor, WEEKDAYS, type SplitKey } from '@/lib/nutrition';
 import { chartItem, foodSchema } from '@/lib/catalogue';
 import { tempPassword } from '@/lib/phone';
+import { whatsappReady } from '@/lib/whatsapp/api';
+import { istDate } from '@/lib/dates';
 import type { ChartMeal, Client, Food } from '@/lib/types';
 
 const COACH = () => process.env.COACH_NAME || 'Nandita';
@@ -19,7 +21,9 @@ async function getClient(id: string): Promise<Client> {
 }
 
 /** Send on WhatsApp; returns an error message instead of throwing so the save still counts. */
+/** null = sent on WhatsApp; 'off' = WhatsApp isn't connected yet; otherwise an error message. */
 async function notify(client: Client, text: string): Promise<string | null> {
+  if (!whatsappReady()) return 'off';
   try {
     const { wa } = makeRuntime();
     await sendCoachMessage(wa, client, text, COACH());
@@ -31,6 +35,12 @@ async function notify(client: Client, text: string): Promise<string | null> {
 
 export type ActionResult = { ok: boolean; message: string };
 
+const OFF_NOTE = 'They\u2019ll see it in their app. WhatsApp messages start once the number is connected.';
+function result(err: string | null, sentMsg: string, savedMsg: string): ActionResult {
+  if (err === 'off') return { ok: true, message: `${savedMsg} ${OFF_NOTE}` };
+  return { ok: !err, message: err ?? sentMsg };
+}
+
 export async function replyToLog(_p: ActionResult | null, form: FormData): Promise<ActionResult> {
   await requireCoach();
   const id = String(form.get('client_id')), date = String(form.get('date')), text = String(form.get('reply') || '').trim().slice(0, 900);
@@ -39,16 +49,23 @@ export async function replyToLog(_p: ActionResult | null, form: FormData): Promi
   await admin.from('logs').upsert({ client_id: id, date, coach_reply: text, coach_replied_at: new Date().toISOString() }, { onConflict: 'client_id,date' });
   const err = await notify(await getClient(id), text);
   revalidatePath(`/coach/${id}`);
-  return { ok: !err, message: err ?? 'Reply sent on WhatsApp.' };
+  return result(err, 'Reply saved and sent on WhatsApp.', 'Reply saved.');
 }
 
 export async function messageClient(_p: ActionResult | null, form: FormData): Promise<ActionResult> {
   await requireCoach();
   const id = String(form.get('client_id')), text = String(form.get('text') || '').trim().slice(0, 900);
   if (!text) return { ok: false, message: 'Write a message first.' };
-  const err = await notify(await getClient(id), text);
+  const client = await getClient(id);
+  // Always keep the message on today's check-in, so the client sees it in the app too.
+  const admin = supabaseAdmin();
+  const today = istDate();
+  const { data: log } = await admin.from('logs').select('coach_reply').eq('client_id', id).eq('date', today).maybeSingle();
+  const reply = log?.coach_reply ? `${log.coach_reply}\n${text}` : text;
+  await admin.from('logs').upsert({ client_id: id, date: today, coach_reply: reply, coach_replied_at: new Date().toISOString() }, { onConflict: 'client_id,date' });
+  const err = await notify(client, text);
   revalidatePath(`/coach/${id}`);
-  return { ok: !err, message: err ?? 'Sent on WhatsApp.' };
+  return result(err, 'Sent on WhatsApp and saved to today\u2019s check-in.', 'Saved to today\u2019s check-in.');
 }
 
 export async function saveTargets(_p: ActionResult | null, form: FormData): Promise<ActionResult> {
@@ -63,7 +80,7 @@ export async function saveTargets(_p: ActionResult | null, form: FormData): Prom
   revalidatePath(`/coach/${s.data.client_id}`);
   if (!s.data.notify) return { ok: true, message: 'Targets saved.' };
   const err = await notify(await getClient(s.data.client_id), `Your daily target is now ${t.kcal} kcal with ${t.p} g protein, ${t.c} g carbs and ${t.f} g fat.${s.data.coach_note ? ' ' + s.data.coach_note : ''}`);
-  return { ok: !err, message: err ?? 'Targets saved and sent on WhatsApp.' };
+  return result(err, 'Targets saved and sent on WhatsApp.', 'Targets saved.');
 }
 
 const ChartSchema = z.array(z.object({
@@ -95,7 +112,7 @@ export async function savePlans(_p: ActionResult | null, form: FormData): Promis
   revalidatePath(`/coach/${id}`);
   if (!form.get('notify')) return { ok: true, message: 'Plan saved.' };
   const err = await notify(await getClient(id), 'Your diet chart and workout plan have been updated. Reply "plan" to see today\u2019s, or open shiftbynandita.com/me.');
-  return { ok: !err, message: err ?? 'Plan saved and the client was told on WhatsApp.' };
+  return result(err, 'Plan saved and the client was told on WhatsApp.', 'Plan saved.');
 }
 
 export async function draftPlanWithAI(clientId: string): Promise<{ chart: ChartMeal[] | null; workout: Record<string, unknown> | null; message: string }> {
@@ -164,6 +181,7 @@ export async function sendPaymentLink(_p: ActionResult | null, form: FormData): 
   const c = await getClient(String(form.get('client_id')));
   if (!c.payment_link) return { ok: false, message: 'Save a payment link first.' };
   const err = await notify(c, `To start your ${c.plan_name || 'SHIFT'} plan, pay here: ${c.payment_link}`);
+  if (err === 'off') return { ok: false, message: 'WhatsApp isn\u2019t connected yet. Copy the link and send it from your own WhatsApp for now.' };
   return { ok: !err, message: err ?? 'Payment link sent on WhatsApp.' };
 }
 

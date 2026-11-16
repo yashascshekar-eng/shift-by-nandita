@@ -1,7 +1,7 @@
 'use client';
 // Searchable food catalogue, modelled on the FITTR catalogue Nandita uses:
 // Food / Favourites / Recent / Custom tabs, veg marker, serving + macros, heart, +.
-import { useMemo, useState, useTransition } from 'react';
+import { useMemo, useRef, useState, useTransition } from 'react';
 import type { Food } from '@/lib/types';
 import { CATEGORIES, UNITS, scaleFood, servingLabel } from '@/lib/catalogue';
 
@@ -36,6 +36,7 @@ export function FoodPicker({
   const [creating, setCreating] = useState(false);
   const [msg, setMsg] = useState('');
   const [pending, start] = useTransition();
+  const busy = useRef(false); // blocks a quick double tap from logging twice
 
   const shown = useMemo(() => {
     const words = q.toLowerCase().split(/\s+/).filter(Boolean);
@@ -58,8 +59,13 @@ export function FoodPicker({
   };
 
   const add = (f: Food) => {
+    if (busy.current) return;
+    busy.current = true;
     const n = parseFloat(qty) || Number(f.serving_qty);
-    start(async () => { await onAdd(f, n); setOpen(null); setMsg(`Added ${f.name}`); setTimeout(() => setMsg(''), 2500); });
+    start(async () => {
+      try { await onAdd(f, n); setOpen(null); setMsg(`Added ${f.name}`); setTimeout(() => setMsg(''), 2500); }
+      finally { busy.current = false; }
+    });
   };
 
   const create = (form: FormData) => {

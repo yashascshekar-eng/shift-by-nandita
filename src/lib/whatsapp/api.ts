@@ -3,6 +3,9 @@ import crypto from 'node:crypto';
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
 
+/** True once the WhatsApp number's token and phone number ID are configured. */
+export const whatsappReady = () => Boolean(process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID);
+
 export interface Button { id: string; title: string }
 export interface ListRow { id: string; title: string; description?: string }
 export type TemplateParam = string;
