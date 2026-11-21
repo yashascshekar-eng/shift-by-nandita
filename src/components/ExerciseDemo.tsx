@@ -39,7 +39,7 @@ function Figure({ demo, label }: { demo: Demo; label: string }) {
 
   const shapes = draw(demo, poseAt(demo, ms));
   return (
-    <div style={{ position: 'relative' }}>
+    <div style={{ position: 'relative', maxWidth: 260, margin: '0 auto', width: '100%' }}>
       <svg ref={ref} viewBox="0 0 200 200" role="img" aria-label={`${label} animation`} style={{ width: '100%', maxWidth: 260, display: 'block', margin: '0 auto', background: 'var(--surface-2)', borderRadius: 12 }}>
         {shapes.map((s, i) => {
           const c = COLOR[s.role];

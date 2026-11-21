@@ -111,6 +111,16 @@ export function WorkoutEditor({ clientId, plan, exercises, templates }: {
           {groups.map((g) => <button key={g} type="button" aria-current={group === g ? 'page' : undefined} onClick={() => setGroup(g)}>{g}</button>)}
         </div>
         <input type="search" placeholder="Search exercises" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search exercises" />
+        {(() => {
+          const p = exercises.find((x) => x.id === preview);
+          return p ? (
+            <div className="log">
+              <div className="row between"><b>{p.name}</b><button type="button" className="linkbtn small" onClick={() => setPreview(null)}>Close</button></div>
+              <ExerciseDemo name={p.name} videoUrl={p.video_url} cue={p.cue} />
+              <button type="button" className="btn sm ghost" onClick={() => add(p)}>+ Add to {day}</button>
+            </div>
+          ) : null;
+        })()}
         <div className="stack" style={{ gap: 6, maxHeight: 320, overflowY: 'auto' }}>
           {list.map((e) => (
             <div key={e.id} className="stack" style={{ gap: 6 }}>
@@ -121,7 +131,6 @@ export function WorkoutEditor({ clientId, plan, exercises, templates }: {
                   <button type="button" className="btn sm ghost" onClick={() => add(e)}>+ Add</button>
                 </div>
               </div>
-              {preview === e.id && <ExerciseDemo name={e.name} videoUrl={e.video_url} cue={e.cue} />}
             </div>
           ))}
           {!list.length && <p className="small muted">No match. Add new exercises under Exercises in the coach menu.</p>}

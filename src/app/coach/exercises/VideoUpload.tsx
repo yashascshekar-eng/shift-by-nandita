@@ -23,7 +23,7 @@ export function VideoUpload({ exerciseId, hasVideo }: { exerciseId: string; hasV
   return (
     <div className="stack" style={{ gap: 6 }}>
       <label className="f">{hasVideo ? 'Replace your video' : 'Upload your own video (5–15 s, phone is fine)'}
-        <input type="file" accept="video/mp4,video/quicktime,video/webm" capture="environment" disabled={busy} onChange={(e) => upload(e.target.files?.[0])} />
+        <input type="file" accept="video/mp4,video/quicktime,video/webm" disabled={busy} onChange={(e) => upload(e.target.files?.[0])} />
       </label>
       {hasVideo && <button type="button" className="linkbtn small" disabled={busy} onClick={async () => setMsg((await setExerciseVideo(exerciseId, null)).message)}>Remove video, use the animation</button>}
       {msg && <p className="small muted">{msg}</p>}
