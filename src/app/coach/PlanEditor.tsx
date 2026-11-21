@@ -1,15 +1,13 @@
 'use client';
-// Coach's plan editor: diet chart built from the food catalogue (live macros vs targets) + weekly workouts.
+// Coach's diet chart editor: meals built from the food catalogue, live macros against the targets.
 import { useState, useTransition } from 'react';
 import { ActionForm, SubmitButton } from '@/components/ActionForm';
 import { FoodPicker } from '@/components/FoodPicker';
-import { draftPlanWithAI, savePlans } from './actions';
-import { WEEKDAYS, type Targets } from '@/lib/nutrition';
+import { draftPlanWithAI, saveDietChart } from './actions';
+import { type Targets } from '@/lib/nutrition';
 import { chartItem, chartTotal, itemsTotal, scaleFood } from '@/lib/catalogue';
 import type { ChartMeal, Food } from '@/lib/types';
 
-type Workout = Record<string, { n: string; s: string | number; r: string }[]>;
-const toText = (w: Workout) => Object.fromEntries(WEEKDAYS.map((d) => [d, (w[d] ?? []).map((e) => `${e.n} | ${e.s} | ${e.r}`).join('\n')]));
 const DEFAULT: ChartMeal[] = [
   { meal: 'Early morning', time: '6:30', items: [] }, { meal: 'Breakfast', time: '8:30', items: [] }, { meal: 'Lunch', time: '13:00', items: [] },
   { meal: 'Evening snack', time: '17:00', items: [] }, { meal: 'Dinner', time: '20:00', items: [] },
@@ -27,11 +25,10 @@ function Totals({ t, target }: { t: { kcal: number; p: number; c: number; f: num
   );
 }
 
-export function PlanEditor({ clientId, chart, workout, foods, targets, diet, aiOn }: {
-  clientId: string; chart: ChartMeal[]; workout: Workout; foods: Food[]; targets: Targets; diet: string; aiOn: boolean;
+export function PlanEditor({ clientId, chart, foods, targets, diet, aiOn }: {
+  clientId: string; chart: ChartMeal[]; foods: Food[]; targets: Targets; diet: string; aiOn: boolean;
 }) {
   const [meals, setMeals] = useState<ChartMeal[]>(chart.length ? chart : DEFAULT);
-  const [w, setW] = useState<Record<string, string>>(toText(workout));
   const [adding, setAdding] = useState<number | null>(null);
   const [msg, setMsg] = useState('');
   const [pending, start] = useTransition();
@@ -50,11 +47,10 @@ export function PlanEditor({ clientId, chart, workout, foods, targets, diet, aiO
     const r = await draftPlanWithAI(clientId);
     setMsg(r.message);
     if (r.chart) setMeals(r.chart);
-    if (r.workout) setW(toText(r.workout as Workout));
   });
 
   return (
-    <ActionForm action={savePlans}>
+    <ActionForm action={saveDietChart}>
       <input type="hidden" name="client_id" value={clientId} />
       <input type="hidden" name="diet_chart" value={JSON.stringify(meals)} />
       <div className="row between">
@@ -106,13 +102,8 @@ export function PlanEditor({ clientId, chart, workout, foods, targets, diet, aiO
       })}
       <button type="button" className="btn sm ghost" onClick={() => setMeals([...meals, { meal: 'Meal', time: '', items: [] }])}>+ Add meal</button>
 
-      <h3 style={{ marginTop: 8 }}>Weekly workouts</h3>
-      <p className="small muted">One exercise per line: <b>name | sets | reps</b>. Leave a day empty for rest.</p>
-      <div className="grid2">{WEEKDAYS.map((d) => (
-        <label key={d} className="f">{d}<textarea name={`wo_${d}`} value={w[d]} onChange={(e) => setW({ ...w, [d]: e.target.value })} style={{ minHeight: 76 }} placeholder="Goblet squat | 3 | 10-12" /></label>
-      ))}</div>
       <label className="row small"><input type="checkbox" name="notify" value="1" defaultChecked /> Tell the client on WhatsApp</label>
-      <SubmitButton>Save plan</SubmitButton>
+      <SubmitButton>Save diet chart</SubmitButton>
     </ActionForm>
   );
 }

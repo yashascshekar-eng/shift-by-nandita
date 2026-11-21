@@ -22,7 +22,7 @@ export interface Client {
   coach_note: string | null;
   meal_plan: { meal: string; items: string }[];
   diet_chart: ChartMeal[];
-  workout_plan: Record<string, { n: string; s: string | number; r: string }[]>;
+  workout_plan: WorkoutPlan;
   last_inbound_at: string | null;
   last_log_date: string | null;
   created_at: string;
@@ -94,3 +94,8 @@ export interface Measurement {
   body_fat: number | null;
   note?: string | null;
 }
+
+export interface WorkoutItem { n: string; s: string | number; r: string; rest?: string; note?: string }
+export type WorkoutPlan = Record<string, WorkoutItem[]>;
+export interface Exercise { id: string; name: string; muscle_group: string; equipment: string; cue: string | null; sort: number; archived: boolean }
+export interface WorkoutTemplate { id: string; name: string; description: string | null; days: WorkoutPlan; is_demo: boolean }

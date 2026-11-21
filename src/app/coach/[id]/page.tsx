@@ -8,14 +8,18 @@ import { aiEnabled } from '@/lib/ai';
 import { whatsappReady } from '@/lib/whatsapp/api';
 import { WeightChart } from '@/components/Charts';
 import { ActionForm, SubmitButton } from '@/components/ActionForm';
-import type { Client, Food, Log, Meal, Measurement } from '@/lib/types';
+import type { Client, Exercise, Food, Log, Meal, Measurement, WorkoutPlan, WorkoutTemplate } from '@/lib/types';
 import { METRICS, ProgressView, mergeRows, type MetricKey } from '@/components/Progress';
 import { linkLogin, messageClient, replyToLog, resetClientPassword, saveStatus, saveTargets, sendPaymentLink } from '../actions';
 import { PlanEditor } from '../PlanEditor';
+import { TargetsEditor } from '../TargetsEditor';
+import { WorkoutEditor } from '../WorkoutEditor';
 import { clientStatus } from '@/lib/status';
 
 export const dynamic = 'force-dynamic';
-const TABS = [['checkins', 'Check-ins'], ['progress', 'Progress'], ['targets', 'Targets'], ['plan', 'Diet chart & workouts'], ['chat', 'WhatsApp'], ['profile', 'Profile & plan']] as const;
+const TABS = [['checkins', 'Check-ins'], ['progress', 'Progress'], ['diet', 'Diet plan'], ['workouts', 'Workouts'], ['chat', 'WhatsApp'], ['profile', 'Profile & plan']] as const;
+// Older links used separate targets / plan tabs.
+const OLD_TABS: Record<string, string> = { targets: 'diet', plan: 'diet' };
 
 export default async function ClientPage({ params, searchParams }: { params: { id: string }; searchParams: { tab?: string; metric?: string } }) {
   await requireCoach();
@@ -23,7 +27,8 @@ export default async function ClientPage({ params, searchParams }: { params: { i
   const { data } = await sb.from('clients').select('*').eq('id', params.id).maybeSingle();
   if (!data) notFound();
   const c = data as Client;
-  const tab = TABS.some(([k]) => k === searchParams.tab) ? searchParams.tab! : 'checkins';
+  const want = OLD_TABS[searchParams.tab ?? ''] ?? searchParams.tab;
+  const tab = TABS.some(([k]) => k === want) ? want! : 'checkins';
   const st = clientStatus(c);
   const windowOpen = within24h(c.last_inbound_at);
 
@@ -37,8 +42,8 @@ export default async function ClientPage({ params, searchParams }: { params: { i
       <nav className="seg tabs">{TABS.map(([k, l]) => <Link key={k} href={`/coach/${c.id}?tab=${k}`} aria-current={tab === k ? 'page' : undefined}>{l}</Link>)}</nav>
       <p className="small muted">{!whatsappReady() ? 'WhatsApp isn\u2019t connected yet: your replies and messages are saved and show in the client\u2019s app.' : windowOpen ? 'Messaged in the last 24 hours: your messages go as normal WhatsApp replies.' : 'No message in the last 24 hours: your messages go as the coach template.'}</p>
       {tab === 'checkins' && <Checkins c={c} />}
-      {tab === 'targets' && <Targets c={c} />}
-      {tab === 'plan' && <Plan c={c} />}
+      {tab === 'diet' && <Diet c={c} />}
+      {tab === 'workouts' && <Workouts c={c} />}
       {tab === 'progress' && <ClientProgress c={c} metric={(METRICS.some(([k]) => k === searchParams.metric) ? searchParams.metric : 'weight') as MetricKey} />}
       {tab === 'chat' && <Chat c={c} />}
       {tab === 'profile' && <Profile c={c} />}
@@ -99,25 +104,7 @@ function Targets({ c }: { c: Client }) {
   const w = Number(c.weight_kg) || 60;
   const b = bmr({ sex: (c.sex as Sex) || 'f', weightKg: w, heightCm: Number(c.height_cm) || 160, age: Number(c.age) || 30 });
   const tdee = b * activityMult(c.activity);
-  return (
-    <ActionForm action={saveTargets}>
-      <input type="hidden" name="client_id" value={c.id} />
-      <p className="small muted">BMR ≈ <b className="num">{Math.round(b)}</b> kcal · TDEE ≈ <b className="num">{Math.round(tdee)}</b> kcal ({(ACTIVITY.find((a) => a.key === c.activity) ?? ACTIVITY[1]).label.toLowerCase()}) · intake weight {w} kg</p>
-      {!T.confirmed && <p className="banner">These are the automatic starting targets. Saving confirms them for the client.</p>}
-      <label className="f">Daily calories<span className="unit"><input name="kcal" type="number" defaultValue={T.kcal} min={900} max={5000} /><em>kcal</em></span></label>
-      <div className="split">{(Object.entries(SPLITS) as [SplitKey, (typeof SPLITS)[SplitKey]][]).map(([k, s]) => {
-        const m = macros(T.kcal, k);
-        return <label key={k}><input type="radio" name="split" value={k} defaultChecked={T.split === k} /><b>{s.label}</b><span>C {s.c}% · P {s.p}% · F {s.f}% · P {m.p} g ({Math.round((m.p / w) * 10) / 10} g/kg)</span></label>;
-      })}</div>
-      <div className="grid2">
-        <label className="f">Water<span className="unit"><input name="water" type="number" defaultValue={T.water} /><em>glasses</em></span></label>
-        <label className="f">Steps<input name="steps" type="number" defaultValue={T.steps} /></label>
-      </div>
-      <label className="f">Note to client (shows on their plan)<textarea name="coach_note" defaultValue={c.coach_note ?? ''} /></label>
-      <label className="row small"><input type="checkbox" name="notify" value="1" defaultChecked /> Send the new targets on WhatsApp</label>
-      <SubmitButton>Save and confirm targets</SubmitButton>
-    </ActionForm>
-  );
+  return <TargetsEditor clientId={c.id} targets={T} weightKg={w} coachNote={c.coach_note ?? ''} bmr={b} tdee={tdee} activity={(ACTIVITY.find((a) => a.key === c.activity) ?? ACTIVITY[1]).label.toLowerCase()} />;
 }
 
 async function Chat({ c }: { c: Client }) {
@@ -180,9 +167,21 @@ function Profile({ c }: { c: Client }) {
   </>);
 }
 
-async function Plan({ c }: { c: Client }) {
+async function Diet({ c }: { c: Client }) {
   const { data } = await supabaseUser().from('foods').select('*').eq('archived', false).or(`owner_client_id.is.null,owner_client_id.eq.${c.id}`).order('name');
-  return <PlanEditor clientId={c.id} chart={c.diet_chart ?? []} workout={c.workout_plan ?? {}} foods={(data ?? []) as Food[]} targets={c.targets ?? draftTargets(c)} diet={DIETS[c.diet ?? 'veg']} aiOn={aiEnabled()} />;
+  return (<>
+    <Targets c={c} />
+    <PlanEditor clientId={c.id} chart={c.diet_chart ?? []} foods={(data ?? []) as Food[]} targets={c.targets ?? draftTargets(c)} diet={DIETS[c.diet ?? 'veg']} aiOn={aiEnabled()} />
+  </>);
+}
+
+async function Workouts({ c }: { c: Client }) {
+  const sb = supabaseUser();
+  const [{ data: ex }, { data: tpl }] = await Promise.all([
+    sb.from('exercises').select('*').eq('archived', false).order('sort'),
+    sb.from('workout_templates').select('*').order('is_demo').order('created_at'),
+  ]);
+  return <WorkoutEditor clientId={c.id} plan={(c.workout_plan ?? {}) as WorkoutPlan} exercises={(ex ?? []) as Exercise[]} templates={(tpl ?? []) as WorkoutTemplate[]} />;
 }
 
 async function ClientProgress({ c, metric }: { c: Client; metric: MetricKey }) {

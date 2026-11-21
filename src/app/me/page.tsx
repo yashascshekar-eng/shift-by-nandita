@@ -1,14 +1,14 @@
 import Link from 'next/link';
 import { requireClient, supabaseUser } from '@/lib/supabase/server';
 import { addDays, istDate, prettyDate, weekdayShort } from '@/lib/dates';
-import { ACTIVITY, DIETS, draftTargets, ENERGY, GOALS, MEAL_SLOTS, SLOT_LABEL, SPLITS, WEEKDAYS, totals, type Targets } from '@/lib/nutrition';
+import { ACTIVITY, DIETS, draftTargets, ENERGY, GOALS, MEAL_SLOTS, SLOT_LABEL, splitLabel, WEEKDAYS, totals, type Targets } from '@/lib/nutrition';
 import { Bar, Ring } from '@/components/Charts';
 import { DietChartView } from '@/components/DietChart';
 import { METRICS, ProgressView, mergeRows, type MetricKey } from '@/components/Progress';
 import { Calculators } from '../tools/Calculators';
 import { MealLogger } from './MealLogger';
 import { istHourMinute, slotForTime } from '@/lib/dates';
-import type { Client, Food, Log, Meal, Measurement } from '@/lib/types';
+import type { Client, Food, Log, Meal, Measurement, WorkoutItem } from '@/lib/types';
 import { deleteMeal, deleteMeasurement, logChartMeal, saveBodyFat, saveCheckin, saveIntake, saveMeasurement } from './actions';
 
 export const metadata = { title: 'My plan' };
@@ -27,14 +27,16 @@ export default async function Me({ searchParams }: { searchParams: { date?: stri
   const tab = ['today', 'plan', 'progress', 'tools'].includes(searchParams.tab ?? '') ? searchParams.tab! : 'today';
   const sb = supabaseUser(); // reads go through RLS as this client
   const week = [...Array(7)].map((_, i) => addDays(today, i - 6));
-  const [{ data: meals }, { data: logs }, { data: foods }, { data: favs }, { data: recentMeals }, { data: ms }] = await Promise.all([
+  const [{ data: meals }, { data: logs }, { data: foods }, { data: favs }, { data: recentMeals }, { data: ms }, { data: exs }] = await Promise.all([
     sb.from('meals').select('*').eq('client_id', client.id).eq('date', date).order('created_at'),
     sb.from('logs').select('*').eq('client_id', client.id).gte('date', addDays(today, -365)).order('date'),
     tab === 'today' ? sb.from('foods').select('*').eq('archived', false).order('name') : Promise.resolve({ data: [] }),
     tab === 'today' ? sb.from('favourites').select('food_id').eq('client_id', client.id) : Promise.resolve({ data: [] }),
     tab === 'today' ? sb.from('meals').select('food_id').eq('client_id', client.id).not('food_id', 'is', null).order('created_at', { ascending: false }).limit(60) : Promise.resolve({ data: [] }),
     tab === 'progress' ? sb.from('measurements').select('*').eq('client_id', client.id).order('date') : Promise.resolve({ data: [] }),
+    tab === 'today' ? sb.from('exercises').select('name, cue') : Promise.resolve({ data: [] }),
   ]);
+  const cues = Object.fromEntries(((exs ?? []) as { name: string; cue: string | null }[]).map((e) => [e.name.toLowerCase(), e.cue ?? '']));
   const recents = [...new Set(((recentMeals ?? []) as { food_id: string }[]).map((m) => m.food_id))].slice(0, 20);
   const allLogs = (logs ?? []) as Log[];
   const log = allLogs.find((l) => l.date === date);
@@ -81,7 +83,7 @@ export default async function Me({ searchParams }: { searchParams: { date?: stri
         </div>
         <MealLogger foods={(foods ?? []) as Food[]} favourites={((favs ?? []) as { food_id: string }[]).map((f) => f.food_id)} recents={recents} date={date} defaultSlot={date === today ? slotForTime(istHourMinute()) : 'lunch'} />
 
-        <Workout plan={client.workout_plan?.[weekdayShort(date)] ?? []} day={weekdayShort(date)} />
+        <Workout plan={client.workout_plan?.[weekdayShort(date)] ?? []} day={weekdayShort(date)} cues={cues} />
 
         <form action={saveCheckin} className="card">
           <h3>Check-in · {date === today ? 'today' : prettyDate(date)}</h3>
@@ -106,14 +108,14 @@ export default async function Me({ searchParams }: { searchParams: { date?: stri
           <div className="row between"><h3>Daily targets</h3><span className={`pill ${T.confirmed ? 'good' : 'warn'}`}>{T.confirmed ? 'Set by Nandita' : 'Awaiting review'}</span></div>
           <div className="grid2">
             <div className="res"><span className="small muted">Calories</span><span className="big num">{T.kcal}</span></div>
-            <div className="res"><span className="small muted">{SPLITS[T.split]?.label}</span><b className="num">P {T.p}g · C {T.c}g · F {T.f}g</b><span className="small muted">Water {T.water} glasses · {T.steps.toLocaleString('en-IN')} steps</span></div>
+            <div className="res"><span className="small muted">{splitLabel(T)}</span><b className="num">P {T.p}g · C {T.c}g · F {T.f}g</b><span className="small muted">Water {T.water} glasses · {T.steps.toLocaleString('en-IN')} steps</span></div>
           </div>
         </div>
         {client.coach_note && <div className="card"><h3>From Nandita</h3><div className="note">{client.coach_note}</div></div>}
         <PlanMeals client={client} targets={T} today={today} />
         <div className="card"><h3>Weekly workouts</h3>{WEEKDAYS.map((d) => {
           const x = client.workout_plan?.[d] ?? [];
-          return <div key={d} className="meal" style={{ gridTemplateColumns: '1fr' }}><b>{d}{!x.length && <span className="small muted"> · Rest</span>}</b>{x.map((e, i) => <div className="ex" key={i}><span>{e.n}</span><span className="muted num">{e.s} × {e.r}</span></div>)}</div>;
+          return <div key={d} className="meal" style={{ gridTemplateColumns: '1fr' }}><b>{d}{!x.length && <span className="small muted"> · Rest</span>}</b>{x.map((e, i) => <div className="ex" key={i}><span>{e.n}</span><span className="muted num">{e.s} × {e.r}{e.rest ? ` · ${e.rest}` : ''}</span></div>)}</div>;
         })}</div>
       </>)}
 
@@ -130,11 +132,22 @@ export default async function Me({ searchParams }: { searchParams: { date?: stri
   );
 }
 
-function Workout({ plan, day }: { plan: { n: string; s: string | number; r: string }[]; day: string }) {
+function Workout({ plan, day, cues }: { plan: WorkoutItem[]; day: string; cues: Record<string, string> }) {
   return (
     <div className="card">
       <div className="row between"><h3>Workout · {day}</h3>{!plan.length && <span className="pill">Rest day</span>}</div>
-      {plan.length ? <div>{plan.map((e, i) => <div className="ex" key={i}><b>{e.n}</b><span className="muted num">{e.s} sets × {e.r}</span></div>)}</div> : <p className="small muted">No workout planned. A 30 minute walk still counts.</p>}
+      {plan.length ? <div>{plan.map((e, i) => {
+        const cue = cues[e.n.toLowerCase()];
+        return (
+          <div className="ex" key={i} style={{ alignItems: 'start' }}>
+            <div style={{ minWidth: 0 }}>
+              <b>{e.n}</b>
+              {(e.note || cue) && <details className="small muted"><summary>How to</summary>{e.note && <p><b>Nandita:</b> {e.note}</p>}{cue && <p>{cue}</p>}</details>}
+            </div>
+            <span className="muted num" style={{ textAlign: 'right' }}>{e.s} × {e.r}{e.rest ? <><br />rest {e.rest}</> : null}</span>
+          </div>
+        );
+      })}</div> : <p className="small muted">No workout planned. A 30 minute walk still counts.</p>}
     </div>
   );
 }

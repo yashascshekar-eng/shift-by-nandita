@@ -3,6 +3,9 @@
 export type Sex = 'f' | 'm';
 export type Goal = 'lose' | 'maintain' | 'gain';
 export type SplitKey = 'high' | 'moderate' | 'zone' | 'low';
+/** A preset, or 'custom' with the coach's own carb / protein / fat percentages. */
+export type SplitChoice = SplitKey | 'custom';
+export interface Ratio { c: number; p: number; f: number }
 
 export const SPLITS: Record<SplitKey, { label: string; c: number; p: number; f: number }> = {
   high: { label: 'High carb', c: 60, p: 25, f: 15 },
@@ -27,7 +30,22 @@ export const SLOT_LABEL: Record<MealSlot, string> = { breakfast: 'Breakfast', lu
 export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
 export const ENERGY = ['Drained', 'Low', 'Okay', 'Good', 'Great'] as const;
 
-export interface Targets { kcal: number; p: number; c: number; f: number; split: SplitKey; water: number; steps: number; confirmed: boolean }
+export interface Targets { kcal: number; p: number; c: number; f: number; split: SplitChoice; ratio?: Ratio; water: number; steps: number; confirmed: boolean }
+
+/** The C/P/F percentages behind a set of targets. */
+export function ratioOf(t: Pick<Targets, 'split' | 'ratio'>): Ratio {
+  if (t.split === 'custom' && t.ratio) return t.ratio;
+  const s = SPLITS[t.split as SplitKey] ?? SPLITS.moderate;
+  return { c: s.c, p: s.p, f: s.f };
+}
+
+export function splitLabel(t: Pick<Targets, 'split' | 'ratio'>): string {
+  const r = ratioOf(t);
+  const name = t.split === 'custom' ? 'Custom split' : (SPLITS[t.split as SplitKey] ?? SPLITS.moderate).label;
+  return `${name} · C ${r.c}% · P ${r.p}% · F ${r.f}%`;
+}
+
+export const ratioValid = (r: Ratio) => [r.c, r.p, r.f].every((x) => Number.isFinite(x) && x >= 5 && x <= 80) && Math.round(r.c + r.p + r.f) === 100;
 
 export function activityMult(key?: string | null): number {
   return (ACTIVITY.find((a) => a.key === key) ?? ACTIVITY[1]).mult;
@@ -52,8 +70,8 @@ export function navyBodyFat(sex: Sex, waist: number, neck: number, heightCm: num
   return 495 / (1.0324 - 0.19077 * Math.log10(x) + 0.15456 * Math.log10(heightCm)) - 450;
 }
 
-export function macros(kcal: number, split: SplitKey = 'moderate') {
-  const s = SPLITS[split] ?? SPLITS.moderate;
+export function macros(kcal: number, split: SplitChoice = 'moderate', ratio?: Ratio) {
+  const s = split === 'custom' && ratio ? ratio : SPLITS[split as SplitKey] ?? SPLITS.moderate;
   return { p: Math.round((kcal * s.p) / 400), c: Math.round((kcal * s.c) / 400), f: Math.round((kcal * s.f) / 900) };
 }
 
@@ -65,8 +83,10 @@ export function draftTargets(c: { sex?: string | null; weight_kg?: number | null
   return { kcal, split: 'moderate', ...macros(kcal, 'moderate'), water: 8, steps: 8000, confirmed: false };
 }
 
-export function targetsFor(kcal: number, split: SplitKey, water = 8, steps = 8000, confirmed = true): Targets {
-  return { kcal: Math.round(kcal), split, ...macros(kcal, split), water, steps, confirmed };
+export function targetsFor(kcal: number, split: SplitChoice, water = 8, steps = 8000, confirmed = true, ratio?: Ratio): Targets {
+  const t: Targets = { kcal: Math.round(kcal), split, ...macros(kcal, split, ratio), water, steps, confirmed };
+  if (split === 'custom' && ratio) t.ratio = ratio;
+  return t;
 }
 
 export interface MealLike { kcal: number | string; p: number | string; c: number | string; f: number | string }

@@ -5,7 +5,7 @@ import { requireCoach, supabaseAdmin } from '@/lib/supabase/server';
 import { makeRuntime } from '@/lib/whatsapp/factory';
 import { sendCoachMessage } from '@/lib/whatsapp/bot';
 import { draftPlan, aiEnabled } from '@/lib/ai';
-import { targetsFor, WEEKDAYS, type SplitKey } from '@/lib/nutrition';
+import { targetsFor, ratioValid, WEEKDAYS, type Ratio, type SplitChoice } from '@/lib/nutrition';
 import { chartItem, foodSchema } from '@/lib/catalogue';
 import { tempPassword } from '@/lib/phone';
 import { whatsappReady } from '@/lib/whatsapp/api';
@@ -71,11 +71,17 @@ export async function messageClient(_p: ActionResult | null, form: FormData): Pr
 export async function saveTargets(_p: ActionResult | null, form: FormData): Promise<ActionResult> {
   await requireCoach();
   const s = z.object({
-    client_id: z.string().uuid(), kcal: z.coerce.number().min(900).max(5000), split: z.enum(['high', 'moderate', 'zone', 'low']),
+    client_id: z.string().uuid(), kcal: z.coerce.number().min(900).max(5000), split: z.enum(['high', 'moderate', 'zone', 'low', 'custom']),
+    rc: z.coerce.number().optional(), rp: z.coerce.number().optional(), rf: z.coerce.number().optional(),
     water: z.coerce.number().min(1).max(20), steps: z.coerce.number().min(0).max(40000), coach_note: z.string().max(1500).default(''), notify: z.string().optional(),
   }).safeParse(Object.fromEntries(form));
   if (!s.success) return { ok: false, message: 'Check the numbers: calories 900–5,000, water 1–20 glasses.' };
-  const t = targetsFor(s.data.kcal, s.data.split as SplitKey, s.data.water, s.data.steps, true);
+  let ratio: Ratio | undefined;
+  if (s.data.split === 'custom') {
+    ratio = { c: Number(s.data.rc), p: Number(s.data.rp), f: Number(s.data.rf) };
+    if (!ratioValid(ratio)) return { ok: false, message: 'Custom split: each between 5% and 80%, adding up to 100%.' };
+  }
+  const t = targetsFor(s.data.kcal, s.data.split as SplitChoice, s.data.water, s.data.steps, true, ratio);
   await supabaseAdmin().from('clients').update({ targets: t, coach_note: s.data.coach_note }).eq('id', s.data.client_id);
   revalidatePath(`/coach/${s.data.client_id}`);
   if (!s.data.notify) return { ok: true, message: 'Targets saved.' };
@@ -88,7 +94,7 @@ const ChartSchema = z.array(z.object({
   items: z.array(z.object({ food_id: z.string().nullable(), name: z.string().max(80), qty: z.number().min(0).max(5000), unit: z.string().max(12), kcal: z.number(), p: z.number(), c: z.number(), f: z.number() })).max(15),
 })).max(8);
 
-export async function savePlans(_p: ActionResult | null, form: FormData): Promise<ActionResult> {
+export async function saveDietChart(_p: ActionResult | null, form: FormData): Promise<ActionResult> {
   await requireCoach();
   const id = String(form.get('client_id'));
   let raw: unknown;
@@ -102,34 +108,96 @@ export async function savePlans(_p: ActionResult | null, form: FormData): Promis
   const chart: ChartMeal[] = parsed.data
     .map((m) => ({ meal: m.meal, time: m.time || undefined, items: m.items.filter((i) => i.qty > 0).map((i) => (i.food_id && byId.get(i.food_id) ? chartItem(byId.get(i.food_id)!, i.qty) : i)) }))
     .filter((m) => m.items.length || m.meal);
-
-  const workout: Record<string, { n: string; s: string; r: string }[]> = {};
-  for (const d of WEEKDAYS) {
-    const rows = String(form.get(`wo_${d}`) ?? '').split('\n').map((l) => l.split('|').map((x) => x.trim())).filter((r) => r[0]);
-    if (rows.length) workout[d] = rows.slice(0, 15).map((r) => ({ n: r[0].slice(0, 60), s: (r[1] || '3').slice(0, 10), r: (r[2] || '10').slice(0, 20) }));
-  }
-  await supabaseAdmin().from('clients').update({ diet_chart: chart, workout_plan: workout }).eq('id', id);
+  await supabaseAdmin().from('clients').update({ diet_chart: chart }).eq('id', id);
   revalidatePath(`/coach/${id}`);
-  if (!form.get('notify')) return { ok: true, message: 'Plan saved.' };
-  const err = await notify(await getClient(id), 'Your diet chart and workout plan have been updated. Reply "plan" to see today\u2019s, or open shiftbynandita.com/me.');
-  return result(err, 'Plan saved and the client was told on WhatsApp.', 'Plan saved.');
+  if (!form.get('notify')) return { ok: true, message: 'Diet chart saved.' };
+  const err = await notify(await getClient(id), 'Your diet chart has been updated. Open shiftbynandita.com/me to see it.');
+  return result(err, 'Diet chart saved and the client was told on WhatsApp.', 'Diet chart saved.');
 }
 
-export async function draftPlanWithAI(clientId: string): Promise<{ chart: ChartMeal[] | null; workout: Record<string, unknown> | null; message: string }> {
+const WorkoutItemSchema = z.object({
+  n: z.string().trim().min(1).max(80), s: z.union([z.string(), z.number()]).transform(String), r: z.string().max(30),
+  rest: z.string().max(20).optional(), note: z.string().max(200).optional(),
+});
+const WorkoutSchema = z.record(z.enum(WEEKDAYS), z.array(WorkoutItemSchema).max(15));
+
+function parseWorkout(json: string) {
+  let raw: unknown;
+  try { raw = JSON.parse(json || '{}'); } catch { return null; }
+  const p = WorkoutSchema.safeParse(raw);
+  if (!p.success) return null;
+  const out: Record<string, z.infer<typeof WorkoutItemSchema>[]> = {};
+  for (const d of WEEKDAYS) if (p.data[d]?.length) out[d] = p.data[d]!.map((e) => ({ ...e, s: e.s.slice(0, 10) }));
+  return out;
+}
+
+export async function saveWorkout(_p: ActionResult | null, form: FormData): Promise<ActionResult> {
   await requireCoach();
-  if (!aiEnabled()) return { chart: null, workout: null, message: 'Add an ANTHROPIC_API_KEY to use AI drafts.' };
+  const id = String(form.get('client_id'));
+  const plan = parseWorkout(String(form.get('workout') || '{}'));
+  if (!plan) return { ok: false, message: 'The workout plan has an invalid entry. Check names, sets and reps.' };
+  await supabaseAdmin().from('clients').update({ workout_plan: plan }).eq('id', id);
+  revalidatePath(`/coach/${id}`);
+  if (!form.get('notify')) return { ok: true, message: 'Workouts saved.' };
+  const err = await notify(await getClient(id), 'Your workout plan has been updated. Open shiftbynandita.com/me to see this week.');
+  return result(err, 'Workouts saved and the client was told on WhatsApp.', 'Workouts saved.');
+}
+
+/** Save the week being edited as a reusable template. */
+export async function saveTemplate(name: string, description: string, workoutJson: string): Promise<ActionResult> {
+  await requireCoach();
+  const plan = parseWorkout(workoutJson);
+  const n = name.trim().slice(0, 60);
+  if (!plan || !Object.keys(plan).length) return { ok: false, message: 'Add at least one exercise before saving a template.' };
+  if (!n) return { ok: false, message: 'Give the template a name.' };
+  const { error } = await supabaseAdmin().from('workout_templates').insert({ name: n, description: description.trim().slice(0, 300), days: plan, is_demo: false });
+  revalidatePath('/coach/exercises');
+  return error ? { ok: false, message: 'Could not save the template.' } : { ok: true, message: `Saved "${n}" as a template.` };
+}
+
+export async function deleteTemplate(form: FormData) {
+  await requireCoach();
+  await supabaseAdmin().from('workout_templates').delete().eq('id', String(form.get('id')));
+  revalidatePath('/coach/exercises');
+}
+
+// ---------- exercise library ----------
+export async function saveExercise(_p: ActionResult | null, form: FormData): Promise<ActionResult> {
+  await requireCoach();
+  const s = z.object({
+    id: z.string().optional(), name: z.string().trim().min(2).max(80), muscle_group: z.string().trim().min(2).max(30),
+    equipment: z.string().trim().max(30).default('Bodyweight'), cue: z.string().max(300).default(''),
+  }).safeParse(Object.fromEntries(form));
+  if (!s.success) return { ok: false, message: 'Give the exercise a name and a muscle group.' };
+  const { id, ...row } = s.data;
+  const admin = supabaseAdmin();
+  const { error } = id ? await admin.from('exercises').update(row).eq('id', id) : await admin.from('exercises').insert({ ...row, sort: 1000 });
+  revalidatePath('/coach/exercises');
+  if (error) return { ok: false, message: error.code === '23505' ? 'An exercise with that name already exists.' : 'Could not save the exercise.' };
+  return { ok: true, message: id ? `Updated ${row.name}.` : `Added ${row.name}.` };
+}
+
+export async function setExerciseArchived(form: FormData) {
+  await requireCoach();
+  await supabaseAdmin().from('exercises').update({ archived: form.get('archived') === '1' }).eq('id', String(form.get('id')));
+  revalidatePath('/coach/exercises');
+}
+
+export async function draftPlanWithAI(clientId: string): Promise<{ chart: ChartMeal[] | null; message: string }> {
+  await requireCoach();
+  if (!aiEnabled()) return { chart: null, message: 'Add an ANTHROPIC_API_KEY to use AI drafts.' };
   const c = await getClient(clientId);
   const t = c.targets ?? targetsFor(1600, 'moderate', 8, 8000, false);
   const allowed = c.diet === 'nonveg' ? ['veg', 'egg', 'nonveg'] : c.diet === 'egg' ? ['veg', 'egg'] : ['veg'];
   const { data } = await supabaseAdmin().from('foods').select('*').eq('archived', false).or(`owner_client_id.is.null,owner_client_id.eq.${c.id}`).in('food_type', allowed).order('category');
   const catalogue = ((data ?? []) as Food[]).slice(0, 250);
   const draft = await draftPlan(c as unknown as Record<string, unknown>, t.kcal, t.p, catalogue);
-  if (!draft) return { chart: null, workout: null, message: 'The AI draft failed. Try again in a moment.' };
+  if (!draft) return { chart: null, message: 'The AI draft failed. Try again in a moment.' };
   const chart: ChartMeal[] = draft.diet_chart.map((m) => ({
     meal: m.meal, time: m.time,
     items: m.items.map((i) => { const f = catalogue[Number(i.id.replace(/\D/g, ''))]; return f ? chartItem(f, i.qty) : null; }).filter(Boolean) as ChartMeal['items'],
   }));
-  return { chart, workout: draft.workout_plan, message: 'Draft ready. Review the amounts, then save.' };
+  return { chart, message: 'Draft ready. Review the amounts, then save.' };
 }
 
 // ---------- catalogue management ----------
