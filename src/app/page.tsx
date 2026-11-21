@@ -42,7 +42,7 @@ export default function Home() {
         <div className="get"><h3>Workouts for home or gym</h3><p>A day-by-day plan with sets and reps, scaled to your level and any pain you mention.</p></div>
         <div className="get"><h3>A coach who reads your log</h3><p>Your notes go straight to Nandita, and her replies come back on WhatsApp.</p></div>
       </section>
-      <footer className="foot"><span>shiftbynandita.com</span><span>Instagram @nanditasrao</span><Link href="/login">Log in</Link></footer>
+      <footer className="foot"><span>shiftbynandita.com</span><span>Instagram @nanditasrao</span><Link href="/privacy">Privacy</Link><Link href="/terms">Terms</Link><Link href="/login">Log in</Link></footer>
     </main>
   );
 }
