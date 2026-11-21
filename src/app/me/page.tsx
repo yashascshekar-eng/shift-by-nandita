@@ -8,6 +8,7 @@ import { METRICS, ProgressView, mergeRows, type MetricKey } from '@/components/P
 import { Calculators } from '../tools/Calculators';
 import { MealLogger } from './MealLogger';
 import { istHourMinute, slotForTime } from '@/lib/dates';
+import { ExerciseDemo } from '@/components/ExerciseDemo';
 import type { Client, Food, Log, Meal, Measurement, WorkoutItem } from '@/lib/types';
 import { deleteMeal, deleteMeasurement, logChartMeal, saveBodyFat, saveCheckin, saveIntake, saveMeasurement } from './actions';
 
@@ -34,9 +35,9 @@ export default async function Me({ searchParams }: { searchParams: { date?: stri
     tab === 'today' ? sb.from('favourites').select('food_id').eq('client_id', client.id) : Promise.resolve({ data: [] }),
     tab === 'today' ? sb.from('meals').select('food_id').eq('client_id', client.id).not('food_id', 'is', null).order('created_at', { ascending: false }).limit(60) : Promise.resolve({ data: [] }),
     tab === 'progress' ? sb.from('measurements').select('*').eq('client_id', client.id).order('date') : Promise.resolve({ data: [] }),
-    tab === 'today' ? sb.from('exercises').select('name, cue') : Promise.resolve({ data: [] }),
+    tab === 'today' ? sb.from('exercises').select('name, cue, video_url') : Promise.resolve({ data: [] }),
   ]);
-  const cues = Object.fromEntries(((exs ?? []) as { name: string; cue: string | null }[]).map((e) => [e.name.toLowerCase(), e.cue ?? '']));
+  const exInfo = Object.fromEntries(((exs ?? []) as { name: string; cue: string | null; video_url: string | null }[]).map((e) => [e.name.toLowerCase(), e]));
   const recents = [...new Set(((recentMeals ?? []) as { food_id: string }[]).map((m) => m.food_id))].slice(0, 20);
   const allLogs = (logs ?? []) as Log[];
   const log = allLogs.find((l) => l.date === date);
@@ -83,7 +84,7 @@ export default async function Me({ searchParams }: { searchParams: { date?: stri
         </div>
         <MealLogger foods={(foods ?? []) as Food[]} favourites={((favs ?? []) as { food_id: string }[]).map((f) => f.food_id)} recents={recents} date={date} defaultSlot={date === today ? slotForTime(istHourMinute()) : 'lunch'} />
 
-        <Workout plan={client.workout_plan?.[weekdayShort(date)] ?? []} day={weekdayShort(date)} cues={cues} />
+        <Workout plan={client.workout_plan?.[weekdayShort(date)] ?? []} day={weekdayShort(date)} info={exInfo} />
 
         <form action={saveCheckin} className="card">
           <h3>Check-in · {date === today ? 'today' : prettyDate(date)}</h3>
@@ -132,17 +133,17 @@ export default async function Me({ searchParams }: { searchParams: { date?: stri
   );
 }
 
-function Workout({ plan, day, cues }: { plan: WorkoutItem[]; day: string; cues: Record<string, string> }) {
+function Workout({ plan, day, info }: { plan: WorkoutItem[]; day: string; info: Record<string, { cue: string | null; video_url: string | null }> }) {
   return (
     <div className="card">
       <div className="row between"><h3>Workout · {day}</h3>{!plan.length && <span className="pill">Rest day</span>}</div>
       {plan.length ? <div>{plan.map((e, i) => {
-        const cue = cues[e.n.toLowerCase()];
+        const x = info[e.n.toLowerCase()];
         return (
           <div className="ex" key={i} style={{ alignItems: 'start' }}>
             <div style={{ minWidth: 0 }}>
               <b>{e.n}</b>
-              {(e.note || cue) && <details className="small muted"><summary>How to</summary>{e.note && <p><b>Nandita:</b> {e.note}</p>}{cue && <p>{cue}</p>}</details>}
+              <details className="small"><summary style={{ cursor: 'pointer', color: 'var(--brand)' }}>Show me how</summary><ExerciseDemo name={e.n} videoUrl={x?.video_url} cue={x?.cue} note={e.note} /></details>
             </div>
             <span className="muted num" style={{ textAlign: 'right' }}>{e.s} × {e.r}{e.rest ? <><br />rest {e.rest}</> : null}</span>
           </div>

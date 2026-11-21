@@ -5,6 +5,7 @@ import { useMemo, useState, useTransition } from 'react';
 import { ActionForm, SubmitButton } from '@/components/ActionForm';
 import { saveTemplate, saveWorkout } from './actions';
 import { WEEKDAYS } from '@/lib/nutrition';
+import { ExerciseDemo } from '@/components/ExerciseDemo';
 import type { Exercise, WorkoutItem, WorkoutPlan, WorkoutTemplate } from '@/lib/types';
 
 const GROUPS = ['All', 'Chest', 'Back', 'Shoulders', 'Lower body', 'Abs', 'Cardio'];
@@ -19,6 +20,7 @@ export function WorkoutEditor({ clientId, plan, exercises, templates }: {
   const [q, setQ] = useState('');
   const [tplName, setTplName] = useState('');
   const [msg, setMsg] = useState('');
+  const [preview, setPreview] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const byName = useMemo(() => new Map(exercises.map((e) => [e.name.toLowerCase(), e])), [exercises]);
   const groups = GROUPS.filter((g) => g === 'All' || exercises.some((e) => e.muscle_group === g)).concat(
@@ -111,9 +113,15 @@ export function WorkoutEditor({ clientId, plan, exercises, templates }: {
         <input type="search" placeholder="Search exercises" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search exercises" />
         <div className="stack" style={{ gap: 6, maxHeight: 320, overflowY: 'auto' }}>
           {list.map((e) => (
-            <div key={e.id} className="row between" style={{ flexWrap: 'nowrap', gap: 8 }}>
-              <div style={{ minWidth: 0 }}><b>{e.name}</b><div className="small muted">{e.muscle_group} · {e.equipment}{e.cue ? ` · ${e.cue}` : ''}</div></div>
-              <button type="button" className="btn sm ghost" onClick={() => add(e)}>+ Add</button>
+            <div key={e.id} className="stack" style={{ gap: 6 }}>
+              <div className="row between" style={{ flexWrap: 'nowrap', gap: 8 }}>
+                <div style={{ minWidth: 0 }}><b>{e.name}</b><div className="small muted">{e.muscle_group} · {e.equipment}</div></div>
+                <div className="row" style={{ flexWrap: 'nowrap' }}>
+                  <button type="button" className="linkbtn small" onClick={() => setPreview(preview === e.id ? null : e.id)}>{preview === e.id ? 'Hide' : 'Demo'}</button>
+                  <button type="button" className="btn sm ghost" onClick={() => add(e)}>+ Add</button>
+                </div>
+              </div>
+              {preview === e.id && <ExerciseDemo name={e.name} videoUrl={e.video_url} cue={e.cue} />}
             </div>
           ))}
           {!list.length && <p className="small muted">No match. Add new exercises under Exercises in the coach menu.</p>}

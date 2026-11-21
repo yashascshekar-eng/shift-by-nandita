@@ -177,6 +177,28 @@ export async function saveExercise(_p: ActionResult | null, form: FormData): Pro
   return { ok: true, message: id ? `Updated ${row.name}.` : `Added ${row.name}.` };
 }
 
+/** A one-time URL the coach's browser uploads a video to directly (videos are too big for a server action). */
+export async function videoUploadUrl(exerciseId: string, contentType: string): Promise<{ url?: string; path?: string; error?: string }> {
+  await requireCoach();
+  const ext = contentType === 'video/quicktime' ? 'mov' : contentType === 'video/webm' ? 'webm' : 'mp4';
+  if (!/^video\/(mp4|quicktime|webm)$/.test(contentType)) return { error: 'Use an MP4, MOV or WebM video.' };
+  const path = `${exerciseId}/${Date.now()}.${ext}`;
+  const { data, error } = await supabaseAdmin().storage.from('exercise-videos').createSignedUploadUrl(path);
+  return error || !data ? { error: 'Could not start the upload.' } : { url: data.signedUrl, path };
+}
+
+export async function setExerciseVideo(exerciseId: string, path: string | null): Promise<ActionResult> {
+  await requireCoach();
+  const admin = supabaseAdmin();
+  const { data: ex } = await admin.from('exercises').select('video_url').eq('id', exerciseId).maybeSingle();
+  const old = ex?.video_url?.split('/exercise-videos/')[1];
+  const url = path ? admin.storage.from('exercise-videos').getPublicUrl(path).data.publicUrl : null;
+  await admin.from('exercises').update({ video_url: url }).eq('id', exerciseId);
+  if (old && old !== path) await admin.storage.from('exercise-videos').remove([old]);
+  revalidatePath('/coach/exercises');
+  return { ok: true, message: path ? 'Video saved. Clients see it instead of the animation.' : 'Video removed. Clients see the animation again.' };
+}
+
 export async function setExerciseArchived(form: FormData) {
   await requireCoach();
   await supabaseAdmin().from('exercises').update({ archived: form.get('archived') === '1' }).eq('id', String(form.get('id')));

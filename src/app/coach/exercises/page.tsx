@@ -4,6 +4,8 @@ import { ActionForm, SubmitButton } from '@/components/ActionForm';
 import { WEEKDAYS } from '@/lib/nutrition';
 import type { Exercise, WorkoutTemplate } from '@/lib/types';
 import { deleteTemplate, saveExercise, setExerciseArchived } from '../actions';
+import { ExerciseDemo } from '@/components/ExerciseDemo';
+import { VideoUpload } from './VideoUpload';
 
 export const metadata = { title: 'Exercises' };
 export const dynamic = 'force-dynamic';
@@ -69,7 +71,11 @@ export default async function Exercises({ searchParams }: { searchParams: { show
           <h3>{g}</h3>
           {list.filter((e) => e.muscle_group === g).map((e) => (
             <details key={e.id} className="log">
-              <summary style={{ cursor: 'pointer' }}><b>{e.name}</b> <span className="small muted">· {e.equipment}</span></summary>
+              <summary style={{ cursor: 'pointer' }}><b>{e.name}</b> <span className="small muted">· {e.equipment}{e.video_url ? ' · your video' : ''}</span></summary>
+              <div className="grid2" style={{ alignItems: 'start' }}>
+                <ExerciseDemo name={e.name} videoUrl={e.video_url} cue={e.cue} />
+                <VideoUpload exerciseId={e.id} hasVideo={!!e.video_url} />
+              </div>
               <ActionForm action={saveExercise} className="stack"><Fields e={e} /><SubmitButton>Save</SubmitButton></ActionForm>
               <form action={setExerciseArchived}><input type="hidden" name="id" value={e.id} /><input type="hidden" name="archived" value={e.archived ? '0' : '1'} /><button className="linkbtn">{e.archived ? 'Restore' : 'Archive'}</button></form>
             </details>

@@ -97,5 +97,5 @@ export interface Measurement {
 
 export interface WorkoutItem { n: string; s: string | number; r: string; rest?: string; note?: string }
 export type WorkoutPlan = Record<string, WorkoutItem[]>;
-export interface Exercise { id: string; name: string; muscle_group: string; equipment: string; cue: string | null; sort: number; archived: boolean }
+export interface Exercise { id: string; name: string; muscle_group: string; equipment: string; cue: string | null; sort: number; archived: boolean; video_url: string | null }
 export interface WorkoutTemplate { id: string; name: string; description: string | null; days: WorkoutPlan; is_demo: boolean }
