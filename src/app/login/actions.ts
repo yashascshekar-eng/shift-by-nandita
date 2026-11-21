@@ -46,6 +46,18 @@ export async function codeStep(prev: LoginState, form: FormData): Promise<LoginS
   if (!prev.phone || prev.mode !== 'code') {
     const digits = phoneDigits(String(form.get('phone') || ''));
     if (!digits) return { mode: 'code', next, error: 'Enter your 10-digit WhatsApp number.' };
+    // Existing number + password accounts: attach the number (unconfirmed) to that same account,
+    // so the code logs into it instead of creating a second account. The number is only
+    // confirmed once the person types the code we sent to it on WhatsApp.
+    const admin = supabaseAdmin();
+    const { data: existing } = await admin.from('profiles').select('id').eq('phone', digits).maybeSingle();
+    if (existing) {
+      const { data: u } = await admin.auth.admin.getUserById(existing.id);
+      if (u.user && !u.user.phone) {
+        const { error: linkErr } = await admin.auth.admin.updateUserById(existing.id, { phone: digits });
+        if (linkErr) return { mode: 'code', next, error: 'We couldn’t send the code. Log in with your password instead.' };
+      }
+    }
     const { error } = await supabaseUser().auth.signInWithOtp({ phone: '+' + digits });
     if (error) return { mode: 'code', next, error: 'We couldn’t send the code. Try again in a minute.' };
     return { mode: 'code', phone: digits, next };
