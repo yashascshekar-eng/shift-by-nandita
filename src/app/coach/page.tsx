@@ -26,7 +26,8 @@ export default async function Coach({ searchParams }: { searchParams: { show?: s
   const review = all.filter((c) => c.status !== 'ended' && !c.targets?.confirmed).length;
   const quiet = all.filter((c) => c.status === 'active' && clientStatus(c).rank >= 2).length;
   const cat = (k: string) => (msgs ?? []).filter((m) => m.category === k).length;
-  const cost = (cat('utility') + cat('authentication') + Math.max(0, cat('service') - 1000)) * 0.115 * 1.18;
+  // India rate card since 1 Oct 2026: ₹0.115 per delivered utility, authentication and service (reply) message, plus 18% GST.
+  const cost = (cat('utility') + cat('authentication') + cat('service')) * 0.115 * 1.18;
 
   return (
     <main className="wrap stack" style={{ paddingBottom: 48 }}>
@@ -48,7 +49,7 @@ export default async function Coach({ searchParams }: { searchParams: { show?: s
       ) : (
         <div className="card"><b>No clients yet</b><p className="small muted">When someone says hi to the SHIFT WhatsApp number and finishes the questions, they appear here.</p></div>
       )}
-      <p className="small muted num">WhatsApp this month: {cat('utility')} templates, {cat('service')} replies ({Math.min(1000, cat('service'))} free), {cat('authentication')} login codes · about ₹{Math.round(cost)} incl. GST</p>
+      <p className="small muted num">WhatsApp this month: {cat('utility')} templates, {cat('service')} replies, {cat('authentication')} login codes · about ₹{Math.round(cost)} incl. GST</p>
     </main>
   );
 }
