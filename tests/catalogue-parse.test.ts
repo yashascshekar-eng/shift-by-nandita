@@ -25,3 +25,13 @@ describe('typed meals against the coach catalogue', () => {
   it('converts ml for built-in foods', () => expect(parseFoodText('200 ml milk', C)[0]).toMatchObject({ name: 'Milk', qty: 0.8 }));
   it('still works with no catalogue', () => expect(parseFoodText('2 idli and sambar').map((i) => i.qty)).toEqual([2, 1]));
 });
+
+describe('household measures for foods listed by weight', () => {
+  const curd = [{ name: 'Curd', serving_qty: 100, unit: 'g', kcal: 61, p: 3.5, c: 4.7, f: 3.3 }];
+  it('reads grams, cups and plain servings', () => {
+    expect(parseFoodText('150 g curd', curd)[0]).toMatchObject({ name: 'Curd (150 g)', kcal: 92 });
+    expect(parseFoodText('1 cup curd', curd)[0]).toMatchObject({ name: 'Curd (200 g)', kcal: 122 });
+    expect(parseFoodText('2 katoris of curd', curd)[0]).toMatchObject({ name: 'Curd (300 g)' });
+    expect(parseFoodText('curd', curd)[0]).toMatchObject({ name: 'Curd (100 g)', kcal: 61 });
+  });
+});

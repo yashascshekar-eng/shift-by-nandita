@@ -50,6 +50,8 @@ export interface CatalogueFood { name: string; serving_qty: number; unit: string
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
 const MASS = /^(g|ml)$/;
+/** Grams (or ml) in one household measure, for foods the catalogue lists by weight. */
+const HOUSEHOLD: Record<string, number> = { cup: 200, katori: 150, bowl: 250, glass: 250, scoop: 30, plate: 250 };
 
 interface Matcher { alias: string; fromCatalogue: boolean; food: Food | CatalogueFood }
 
@@ -122,7 +124,7 @@ export function parseFoodText(input: string, catalogue: CatalogueFood[] = []): M
   let text = ' ' + input.toLowerCase().replace(/(\d)\s*(g|gm|gms|grams?|ml)\b/g, '$1 $2').replace(/[^a-z0-9.\s]/g, ' ').replace(/\s+/g, ' ') + ' ';
   const found: { idx: number; key: string; item: MealItem }[] = [];
   for (const m of matchers(catalogue)) {
-    const re = new RegExp(`(?:\\b(\\d+(?:\\.\\d+)?|a|an|one|two|three|four|five|half)\\s+(?:(g|gm|gms|grams?|ml)\\s+)?(?:${UNIT_WORDS}\\s+){0,2})?\\b${m.alias.replace(/ /g, '\\s')}s?\\b`);
+    const re = new RegExp(`(?:\\b(\\d+(?:\\.\\d+)?|a|an|one|two|three|four|five|half)\\s+(?:(g|gm|gms|grams?|ml)\\s+)?(?:(${UNIT_WORDS})\\s+)?(?:${UNIT_WORDS}\\s+)?)?\\b${m.alias.replace(/ /g, '\\s')}s?\\b`);
     const hit = re.exec(text);
     if (!hit) continue;
     const key = m.food.name;
@@ -132,7 +134,10 @@ export function parseFoodText(input: string, catalogue: CatalogueFood[] = []): M
     let item: MealItem;
     if (m.fromCatalogue) {
       const f = m.food as CatalogueFood;
-      const amount = hit[2] && MASS.test(f.unit) && raw && !WORD_NUM[raw] ? n : null;
+      // "1 cup curd" for a food measured in grams: use a household measure.
+      const household = hit[3] ? HOUSEHOLD[hit[3].replace(/(es|s)$/, '')] : undefined;
+      const amount = hit[2] && MASS.test(f.unit) && raw && !WORD_NUM[raw] ? n
+        : household && MASS.test(f.unit) ? n * household : null;
       item = catalogueItem(f, amount, n);
     } else {
       const f = m.food as Food;
