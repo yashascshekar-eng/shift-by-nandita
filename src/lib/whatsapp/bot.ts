@@ -235,7 +235,7 @@ export class ShiftBot {
     const est = media ? await this.deps.estimate({ imageBase64: media.data.toString('base64'), mimeType: media.mimeType, text: msg.caption }) : null;
     if (!est || !est.items.length) {
       if (est?.notFood) return this.wa.text(msg.from, 'That doesn’t look like food. Send a photo of your plate, or type what you ate.');
-      const fallback = msg.caption ? parseFoodText(msg.caption) : [];
+      const fallback = msg.caption ? parseFoodText(msg.caption, await this.store.catalogue(client.id)) : [];
       if (fallback.length) return this.proposeMeal(msg.from, client, fallback, photoPath);
       await this.store.setSession(msg.from, 'meal:edit', { items: [], photo_path: photoPath, slot: this.slot() });
       return this.wa.text(msg.from, 'Got your photo 📷 What’s on the plate? e.g. "2 chapati, dal, bhindi, salad"');
@@ -245,7 +245,7 @@ export class ShiftBot {
 
   private async estimateFromText(msg: Inbound, client: Client, text: string) {
     const est = await this.deps.estimate({ text });
-    const items = est?.items.length ? est.items : parseFoodText(text);
+    const items = est?.items.length ? est.items : parseFoodText(text, await this.store.catalogue(client.id));
     if (!items.length) {
       return this.wa.buttons(msg.from, 'I couldn’t match that to food. Send a photo or list what you ate, e.g. "2 idli and sambar".', MENU);
     }
@@ -295,7 +295,7 @@ export class ShiftBot {
     const t = (msg.text ?? '').trim();
     if (!t) return this.wa.text(msg.from, 'Type what’s on the plate, e.g. "2 chapati, dal, salad"');
     const est = d.items.length ? await this.deps.estimate({ correction: t, previous: d.items }) : await this.deps.estimate({ text: t });
-    let items = est?.items.length ? est.items : parseFoodText(t);
+    let items = est?.items.length ? est.items : parseFoodText(t, await this.store.catalogue(client.id));
     if (!items.length) items = d.items;
     if (!items.length) return this.wa.text(msg.from, 'I couldn’t match that to food. Try "2 idli, sambar, 1 cup curd".');
     return this.proposeMeal(msg.from, client, items, d.photo_path, d.slot);

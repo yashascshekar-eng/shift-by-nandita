@@ -2,6 +2,7 @@
 // SupabaseStore is the real one; tests use MemoryStore.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Client, Log, Meal, Session } from './types';
+import type { CatalogueFood } from './foods';
 
 export interface Store {
   getClientByPhone(phone: string): Promise<Client | null>;
@@ -21,10 +22,22 @@ export interface Store {
   recordInbound(waMessageId: string, waId: string, clientId: string | null, kind: string, body: unknown): Promise<boolean>;
   recordOutbound(waId: string, clientId: string | null, kind: string, category: string, body: unknown): Promise<void>;
   uploadPhoto(path: string, data: Buffer, mimeType: string): Promise<string | null>;
+  /** Nandita's food catalogue plus this client's own foods, for matching typed meals. */
+  catalogue(clientId: string): Promise<CatalogueFood[]>;
 }
 
 export class SupabaseStore implements Store {
   constructor(private db: SupabaseClient) {}
+  private foods = new Map<string, CatalogueFood[]>();
+
+  async catalogue(clientId: string) {
+    if (!this.foods.has(clientId)) {
+      const { data } = await this.db.from('foods').select('name, serving_qty, unit, kcal, p, c, f')
+        .eq('archived', false).or(`owner_client_id.is.null,owner_client_id.eq.${clientId}`);
+      this.foods.set(clientId, ((data ?? []) as CatalogueFood[]).map((x) => ({ ...x, serving_qty: Number(x.serving_qty), kcal: Number(x.kcal), p: Number(x.p), c: Number(x.c), f: Number(x.f) })));
+    }
+    return this.foods.get(clientId)!;
+  }
 
   async getClientByPhone(phone: string) {
     const { data } = await this.db.from('clients').select('*').eq('phone', phone).maybeSingle();
@@ -105,6 +118,8 @@ export class MemoryStore implements Store {
   logs: Log[] = [];
   meals: Meal[] = [];
   seen = new Set<string>();
+  foods: CatalogueFood[] = [];
+  async catalogue() { return this.foods; }
   outbound: { waId: string; kind: string; category: string; body: unknown }[] = [];
 
   async getClientByPhone(phone: string) { return this.clients.find((c) => c.phone === phone) ?? null; }

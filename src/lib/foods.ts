@@ -45,23 +45,105 @@ const UNIT_WORDS = '(?:cups?|katoris?|bowls?|plates?|pieces?|pcs|glass(?:es)?|sc
 
 const WORD_NUM: Record<string, number> = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, half: 0.5 };
 
+/** A food from Nandita's catalogue (values are per serving_qty of unit). */
+export interface CatalogueFood { name: string; serving_qty: number; unit: string; kcal: number; p: number; c: number; f: number }
+
+const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+const MASS = /^(g|ml)$/;
+
+interface Matcher { alias: string; fromCatalogue: boolean; food: Food | CatalogueFood }
+
 /**
- * Parse free text like "2 idli, sambar and 1 cup curd" into items.
- * Longer aliases win ("masala dosa" before "dosa", "egg white" before "egg").
+ * Aliases for catalogue foods: the full name, the part before a comma or bracket
+ * ("Dal, cooked" → "dal"), each part of "a / b" names, plus the built-in table's
+ * spellings when they describe the same food ("Chapati" also matches "roti").
+ * An alias shared by several catalogue foods is dropped unless it is one food's
+ * exact name, so "paneer" never picks one of three paneer variants at random.
  */
-export function parseFoodText(input: string): MealItem[] {
-  let text = ' ' + input.toLowerCase().replace(/[^a-z0-9.\s]/g, ' ').replace(/\s+/g, ' ') + ' ';
-  const candidates = FOODS.flatMap((f) => f.aliases.map((a) => ({ f, a }))).sort((x, y) => y.a.length - x.a.length);
-  const found: { idx: number; item: MealItem }[] = [];
-  for (const { f, a } of candidates) {
-    const re = new RegExp(`(?:\\b(\\d+(?:\\.\\d+)?|a|an|one|two|three|four|five|half)\\s+(?:${UNIT_WORDS}\\s+){0,2})?\\b${a.replace(/ /g, '\\s')}s?\\b`);
-    const m = re.exec(text);
-    if (!m) continue;
-    if (found.some((x) => x.item.name === f.name)) continue;
-    const raw = m[1];
-    const qty = raw ? (WORD_NUM[raw] ?? (parseFloat(raw) || 1)) : 1;
-    found.push({ idx: m.index, item: { name: f.name, qty, kcal: f.kcal * qty, p: f.p * qty, c: f.c * qty, f: f.f * qty } });
-    text = text.slice(0, m.index) + ' '.repeat(m[0].length) + text.slice(m.index + m[0].length); // consume
+function matchers(catalogue: CatalogueFood[]): Matcher[] {
+  // rank: 3 exact name, 2 name before a comma/bracket or a built-in spelling of the same food, 1 one part of "a / b"
+  const byAlias = new Map<string, { food: CatalogueFood; rank: number; st?: string }[]>();
+  const add = (alias: string, food: CatalogueFood, rank: number, st?: string) => {
+    if (alias.length < 3) return;
+    const list = byAlias.get(alias) ?? [];
+    const prev = list.find((x) => x.food === food);
+    if (prev) { if (rank > prev.rank) Object.assign(prev, { rank, st }); }
+    else list.push({ food, rank, st });
+    byAlias.set(alias, list);
+  };
+  for (const food of catalogue) {
+    const full = norm(food.name);
+    const rawHead = food.name.split(/[,(]/)[0];
+    const head = norm(rawHead);
+    const parts = rawHead.includes('/') ? rawHead.split('/').map(norm).filter(Boolean) : [];
+    add(full, food, 3);
+    add(head, food, 2);
+    // "Paneer, high protein" is usually typed "high protein paneer".
+    const tail = food.name.includes(',') ? norm(food.name.split(',').slice(1).join(' ').replace(/\(.*?\)/g, '')) : '';
+    if (tail) add(`${tail} ${head}`, food, 3);
+    for (const p of parts) add(p, food, 1);
+    for (const st of FOODS) {
+      const names = [norm(st.name), norm(st.name.split(/[,(]/)[0]), ...st.aliases.map(norm)];
+      if ([full, head, ...parts].some((a) => names.includes(a))) for (const a of st.aliases) add(norm(a), food, 2, st.key);
+    }
+  }
+  const out: Matcher[] = [];
+  const absorbed = new Set<string>();
+  for (const [alias, list] of byAlias) {
+    const top = Math.max(...list.map((x) => x.rank));
+    const best = list.filter((x) => x.rank === top);
+    if (best.length !== 1) continue; // ambiguous: let the built-in table or a longer alias handle it
+    out.push({ alias, fromCatalogue: true, food: best[0].food });
+    if (best[0].st) absorbed.add(best[0].st);
+  }
+  for (const f of FOODS) {
+    if (absorbed.has(f.key)) continue;
+    for (const a of f.aliases) out.push({ alias: norm(a), fromCatalogue: false, food: f });
+  }
+  // Longer aliases first ("masala dosa" before "dosa"); catalogue wins ties.
+  return out.sort((x, y) => y.alias.length - x.alias.length || Number(y.fromCatalogue) - Number(x.fromCatalogue));
+}
+
+function catalogueItem(f: CatalogueFood, amount: number | null, servings: number): MealItem {
+  const mass = MASS.test(f.unit);
+  const qtyInUnit = amount ?? servings * f.serving_qty;
+  const factor = qtyInUnit / (f.serving_qty || 1);
+  const r1 = (n: number) => Math.round(n * 10) / 10;
+  return mass
+    ? { name: `${f.name} (${Math.round(qtyInUnit)} ${f.unit})`, qty: 1, kcal: Math.round(f.kcal * factor), p: r1(f.p * factor), c: r1(f.c * factor), f: r1(f.f * factor) }
+    : { name: f.name, qty: r1(factor), kcal: Math.round(f.kcal * factor), p: r1(f.p * factor), c: r1(f.c * factor), f: r1(f.f * factor) };
+}
+
+/**
+ * Parse free text like "2 idli, sambar and 1 cup curd" or "150 g paneer" into items.
+ * Matches Nandita's catalogue first (with her serving sizes), then the built-in table.
+ */
+export function parseFoodText(input: string, catalogue: CatalogueFood[] = []): MealItem[] {
+  let text = ' ' + input.toLowerCase().replace(/(\d)\s*(g|gm|gms|grams?|ml)\b/g, '$1 $2').replace(/[^a-z0-9.\s]/g, ' ').replace(/\s+/g, ' ') + ' ';
+  const found: { idx: number; key: string; item: MealItem }[] = [];
+  for (const m of matchers(catalogue)) {
+    const re = new RegExp(`(?:\\b(\\d+(?:\\.\\d+)?|a|an|one|two|three|four|five|half)\\s+(?:(g|gm|gms|grams?|ml)\\s+)?(?:${UNIT_WORDS}\\s+){0,2})?\\b${m.alias.replace(/ /g, '\\s')}s?\\b`);
+    const hit = re.exec(text);
+    if (!hit) continue;
+    const key = m.food.name;
+    if (found.some((x) => x.key === key)) continue;
+    const raw = hit[1];
+    const n = raw ? (WORD_NUM[raw] ?? (parseFloat(raw) || 1)) : 1;
+    let item: MealItem;
+    if (m.fromCatalogue) {
+      const f = m.food as CatalogueFood;
+      const amount = hit[2] && MASS.test(f.unit) && raw && !WORD_NUM[raw] ? n : null;
+      item = catalogueItem(f, amount, n);
+    } else {
+      const f = m.food as Food;
+      // "200 ml milk" or "150 g paneer" against the built-in table: convert to its serving
+      // (the gram size in the name, or 250 ml for a glass / cup, else 100 g).
+      const size = Number(/(\d+)\s*(?:g|ml)\b/.exec(f.name)?.[1]) || (/glass|cup/.test(f.unit) ? 250 : 100);
+      const q = hit[2] && raw && !WORD_NUM[raw] ? Math.round((n / size) * 100) / 100 : n;
+      item = { name: f.name, qty: q, kcal: Math.round(f.kcal * q), p: Math.round(f.p * q * 10) / 10, c: Math.round(f.c * q * 10) / 10, f: Math.round(f.f * q * 10) / 10 };
+    }
+    found.push({ idx: hit.index, key, item });
+    text = text.slice(0, hit.index) + ' '.repeat(hit[0].length) + text.slice(hit.index + hit[0].length); // consume
   }
   return found.sort((a, b) => a.idx - b.idx).map((x) => x.item);
 }
